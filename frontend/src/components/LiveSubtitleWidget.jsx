@@ -65,7 +65,7 @@ export default function LiveSubtitleWidget({
   // Capture states
   const [isListening, setIsListening] = useState(false);
   const [captureSource, setCaptureSource] = useState(localVideoLoaded ? 'video' : 'display'); // 'video', 'display', 'mic'
-  const [whisperModel, setWhisperModel] = useState('base'); // 'base' (Chính xác cao 🎯), 'tiny' (Siêu tốc ⚡)
+  const [whisperModel, setWhisperModel] = useState('tiny'); // Default 'tiny' for lightning speed (~0.3s) and tight video sync
   const [currentOriginal, setCurrentOriginal] = useState('');
   const [currentTranslated, setCurrentTranslated] = useState('Đang chờ phát hiện âm thanh từ video...');
   const [detectedLang, setDetectedLang] = useState('');
@@ -74,9 +74,9 @@ export default function LiveSubtitleWidget({
 
   // Widget display settings
   const [isBilingual, setIsBilingual] = useState(true);
-  const [fontSize, setFontSize] = useState(22);
+  const [fontSize, setFontSize] = useState(20);
   const [fontColor, setFontColor] = useState('#FDE047'); // Default vibrant yellow for high readability
-  const [bgOpacity, setBgOpacity] = useState(85); // 0 - 100
+  const [bgOpacity, setBgOpacity] = useState(40); // Default 40% for translucent unobtrusive look
   const [widgetPosition, setWidgetPosition] = useState('bottom'); // 'bottom', 'floating', 'pip'
   const [showHistory, setShowHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -98,9 +98,10 @@ export default function LiveSubtitleWidget({
   const processorRef = useRef(null);
   const pcmBufferRef = useRef([]);
   const accumulatedSamplesRef = useRef(0);
+  const chunkQueueRef = useRef([]);
+  const isWorkingRef = useRef(false);
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
-  const isProcessingChunkRef = useRef(false);
   const pipWindowRef = useRef(null);
   const pipContainerRef = useRef(null);
   const sessionStartTimeRef = useRef(null);
@@ -286,7 +287,7 @@ export default function LiveSubtitleWidget({
       const audioOnlyStream = new MediaStream(audioTracks);
       startAudioVisualizer(audioOnlyStream);
 
-      // Web Audio PCM Engine with Intelligent Dynamic VAD Slicing
+      // Web Audio PCM Engine with Ultra-Fast Speech Pause Detection (16kHz WAV slices)
       try {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         const pcmCtx = new AudioCtx();
@@ -303,22 +304,23 @@ export default function LiveSubtitleWidget({
         let silenceConsecutiveFrames = 0;
         let sliceStartSec = getCurrentTimePos();
 
-        // Minimum 0.85s of audio before slicing on natural pause
-        const minSpeechSamples = Math.round(pcmCtx.sampleRate * 0.85);
-        // Maximum 3.0s slice cap to prevent delay
-        const maxSliceSamples = Math.round(pcmCtx.sampleRate * 3.0);
+        // Optimized parameters for ultra-low latency & video sync:
+        // 0.65s minimum speech before slicing on natural pause
+        const minSpeechSamples = Math.round(pcmCtx.sampleRate * 0.65);
+        // 1.8s maximum slice cap to ensure subtitles appear immediately
+        const maxSliceSamples = Math.round(pcmCtx.sampleRate * 1.8);
 
         processor.onaudioprocess = (e) => {
           const inputData = e.inputBuffer.getChannelData(0);
 
-          // Real-time RMS calculation for Voice Activity Detection
+          // Real-time RMS calculation
           let sumSquares = 0;
           for (let i = 0; i < inputData.length; i++) {
             sumSquares += inputData[i] * inputData[i];
           }
           const frameRms = Math.sqrt(sumSquares / inputData.length);
 
-          if (frameRms > 0.006) {
+          if (frameRms > 0.005) {
             hasSpeechInSlice = true;
             silenceConsecutiveFrames = 0;
           } else if (hasSpeechInSlice) {
@@ -331,16 +333,16 @@ export default function LiveSubtitleWidget({
           const currentSamples = accumulatedSamplesRef.current;
           let shouldFlush = false;
 
-          // Condition 1: Natural sentence pause (speaker stopped talking for ~300ms after speech)
-          if (hasSpeechInSlice && currentSamples >= minSpeechSamples && silenceConsecutiveFrames >= 3) {
+          // 1. Natural sentence pause: speaker paused for ~160ms (2 frames) after speech
+          if (hasSpeechInSlice && currentSamples >= minSpeechSamples && silenceConsecutiveFrames >= 2) {
             shouldFlush = true;
           }
-          // Condition 2: Maximum speech chunk duration reached (3.0s)
+          // 2. Max speech duration limit reached (1.8s)
           else if (currentSamples >= maxSliceSamples) {
             shouldFlush = true;
           }
-          // Condition 3: Pure continuous silence (discard buffer after 2.5s to save CPU & avoid empty API calls)
-          else if (!hasSpeechInSlice && currentSamples >= pcmCtx.sampleRate * 2.5) {
+          // 3. Continuous silence: discard buffer after 1.5s of no speech to prevent lag
+          else if (!hasSpeechInSlice && currentSamples >= pcmCtx.sampleRate * 1.5) {
             pcmBufferRef.current = [];
             accumulatedSamplesRef.current = 0;
             sliceStartSec = getCurrentTimePos();
@@ -368,7 +370,7 @@ export default function LiveSubtitleWidget({
 
             if (hadVoice) {
               const wavBlob = encodeWAV(merged, pcmCtx.sampleRate);
-              handleAudioChunk(wavBlob, curStart, sliceEndSec);
+              enqueueChunk(wavBlob, curStart, sliceEndSec);
             }
           }
         };
@@ -395,11 +397,34 @@ export default function LiveSubtitleWidget({
     }
   };
 
-  // Process incoming audio chunk with exact boundary alignment
-  const handleAudioChunk = async (blob, sliceStartSec, sliceEndSec) => {
-    if (isProcessingChunkRef.current) return;
-    isProcessingChunkRef.current = true;
+  // Non-blocking FIFO audio chunk queue
+  const enqueueChunk = (blob, sliceStartSec, sliceEndSec) => {
+    // Keep max 2 chunks in flight to ensure real-time video sync without lagging backlog
+    if (chunkQueueRef.current.length >= 2) {
+      chunkQueueRef.current.shift();
+    }
+    chunkQueueRef.current.push({ blob, sliceStartSec, sliceEndSec });
+    drainQueue();
+  };
 
+  const drainQueue = async () => {
+    if (isWorkingRef.current || chunkQueueRef.current.length === 0) return;
+    isWorkingRef.current = true;
+
+    while (chunkQueueRef.current.length > 0) {
+      const item = chunkQueueRef.current.shift();
+      try {
+        await processAudioChunk(item.blob, item.sliceStartSec, item.sliceEndSec);
+      } catch (err) {
+        console.warn('Queue processing error:', err);
+      }
+    }
+
+    isWorkingRef.current = false;
+  };
+
+  // Process incoming audio chunk with exact boundary alignment
+  const processAudioChunk = async (blob, sliceStartSec, sliceEndSec) => {
     try {
       // Build sliding context window from last 2 entries
       const contextWindow = liveHistory.slice(0, 2).map((e) => e.original).reverse().join(' ');
@@ -420,11 +445,11 @@ export default function LiveSubtitleWidget({
         setCurrentTranslated(result.translated_text || result.original_text);
         setDetectedLang(result.detected_language);
 
-        const chunkDuration = Math.max(0.4, sliceEndSec - sliceStartSec);
+        const chunkDuration = Math.max(0.3, sliceEndSec - sliceStartSec);
         // Exact video timestamp alignment down to milliseconds using Whisper speech boundaries
         const exactSpeechStart = Math.max(0, sliceStartSec + (result.speech_start || 0));
         const exactSpeechEnd = Math.max(
-          exactSpeechStart + 0.4,
+          exactSpeechStart + 0.3,
           sliceStartSec + (result.speech_end || chunkDuration)
         );
 
@@ -457,8 +482,6 @@ export default function LiveSubtitleWidget({
       }
     } catch (err) {
       console.warn('Chunk translation error:', err);
-    } finally {
-      isProcessingChunkRef.current = false;
     }
   };
 
@@ -472,6 +495,8 @@ export default function LiveSubtitleWidget({
     }
     pcmBufferRef.current = [];
     accumulatedSamplesRef.current = 0;
+    chunkQueueRef.current = [];
+    isWorkingRef.current = false;
 
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       try {
@@ -492,35 +517,75 @@ export default function LiveSubtitleWidget({
     setCurrentTranslated('Đã tạm dừng dịch trực tiếp.');
   };
 
-  // Synchronize Subtitles to Picture-in-Picture window instantaneously
+  // Synchronize Subtitles to Picture-in-Picture window instantaneously (Small & Semi-Transparent)
   const renderPipContent = useCallback(() => {
     if (!pipWindowRef.current || pipWindowRef.current.closed || !pipContainerRef.current) return;
     const c = pipContainerRef.current;
-    c.style.backgroundColor = '#0b0f19';
+    
+    // Ensure transparent root and body
+    try {
+      if (pipWindowRef.current.document) {
+        pipWindowRef.current.document.body.style.backgroundColor = 'transparent';
+        pipWindowRef.current.document.body.style.margin = '0';
+        pipWindowRef.current.document.body.style.overflow = 'hidden';
+        pipWindowRef.current.document.documentElement.style.backgroundColor = 'transparent';
+      }
+    } catch (e) {}
+
+    c.style.backgroundColor = 'transparent';
+    c.style.padding = '2px 8px';
+
+    const transAlpha = Math.max(0.2, (bgOpacity / 100) * 0.55);
+
     c.innerHTML = `
-      <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #94a3b8; margin-bottom: 6px; display: flex; align-items: center; justify-content: center; gap: 8px;">
-        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${isListening ? (isSpeechActive ? '#10b981' : '#ef4444') : '#64748b'}; box-shadow: 0 0 8px ${isListening ? (isSpeechActive ? '#10b981' : '#ef4444') : 'transparent'};"></span>
-        <span>SubTranslate Live ${detectedLang ? `(${detectedLang.toUpperCase()})` : ''}</span>
-        <span style="background: rgba(255,255,255,0.08); padding: 1px 6px; border-radius: 6px; font-size: 10px; color: #cbd5e1;">${whisperModel === 'base' ? '🎯 Base' : '⚡ Tiny'}</span>
-        ${isSpeechActive ? '<span style="color: #10b981; font-weight: 700; background: rgba(16, 185, 129, 0.15); padding: 1px 6px; border-radius: 8px;">🎙️ Đang nói</span>' : ''}
-      </div>
-      ${isBilingual && currentOriginal ? `
-        <div style="font-size: ${Math.max(13, fontSize - 7)}px; color: #94a3b8; margin-bottom: 5px; text-align: center; font-style: italic; max-width: 95%; line-height: 1.35;">
-          "${currentOriginal}"
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; box-sizing: border-box;">
+        <div style="
+          background: rgba(10, 15, 29, ${transAlpha});
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 12px;
+          padding: 5px 14px;
+          max-width: 98%;
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+          text-align: center;
+          transition: all 0.12s ease;
+        ">
+          <!-- Subtle top status line -->
+          <div style="font-size: 10px; font-weight: 700; color: #94a3b8; margin-bottom: 2px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+            <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: ${isListening ? (isSpeechActive ? '#10b981' : '#ef4444') : '#64748b'}; box-shadow: 0 0 6px ${isListening ? (isSpeechActive ? '#10b981' : '#ef4444') : 'transparent'};"></span>
+            <span style="letter-spacing: 0.04em;">${detectedLang ? detectedLang.toUpperCase() : 'LIVE'}</span>
+            ${isSpeechActive ? '<span style="color: #10b981; font-weight: 700;">●</span>' : ''}
+          </div>
+
+          <!-- Bilingual Original Line -->
+          ${isBilingual && currentOriginal ? `
+            <div style="font-size: ${Math.max(11, fontSize - 8)}px; color: #cbd5e1; margin-bottom: 2px; font-style: italic; line-height: 1.2; text-shadow: 0 1px 3px rgba(0,0,0,0.95);">
+              "${currentOriginal}"
+            </div>
+          ` : ''}
+
+          <!-- Main Translated Subtitle -->
+          <div style="
+            font-size: ${Math.max(14, fontSize - 3)}px;
+            font-weight: 800;
+            color: ${fontColor};
+            line-height: 1.25;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 0 8px rgba(0,0,0,0.95), 1px 1px 2px #000;
+          ">
+            ${currentTranslated}
+          </div>
         </div>
-      ` : ''}
-      <div style="font-size: ${fontSize}px; font-weight: 800; color: ${fontColor}; text-align: center; text-shadow: 0 2px 6px rgba(0,0,0,0.9); line-height: 1.35; max-width: 96%; transition: all 0.15s ease;">
-        ${currentTranslated}
       </div>
     `;
-  }, [isListening, isSpeechActive, detectedLang, isBilingual, currentOriginal, fontSize, fontColor, currentTranslated, whisperModel]);
+  }, [isListening, isSpeechActive, detectedLang, isBilingual, currentOriginal, fontSize, fontColor, currentTranslated, bgOpacity]);
 
   // Reactive effect: update PiP window immediately upon new translation
   useEffect(() => {
     renderPipContent();
   }, [renderPipContent]);
 
-  // Pop-out into Always-on-top Picture-in-Picture window (Document PiP API)
+  // Pop-out into Always-on-top Picture-in-Picture window (Document PiP API: Small & Transparent)
   const togglePictureInPictureWindow = async () => {
     if (pipWindowRef.current && !pipWindowRef.current.closed) {
       pipWindowRef.current.close();
@@ -537,12 +602,19 @@ export default function LiveSubtitleWidget({
     }
 
     try {
+      // Small, compact window size (480 x 74) so it won't block the video
       const pipWindow = await window.documentPictureInPicture.requestWindow({
-        width: 720,
-        height: 180,
+        width: 480,
+        height: 74,
       });
       pipWindowRef.current = pipWindow;
       setWidgetPosition('pip');
+
+      // Make background completely transparent
+      pipWindow.document.body.style.backgroundColor = 'transparent';
+      pipWindow.document.body.style.margin = '0';
+      pipWindow.document.body.style.overflow = 'hidden';
+      pipWindow.document.documentElement.style.backgroundColor = 'transparent';
 
       // Copy stylesheets to PiP window
       [...document.styleSheets].forEach((styleSheet) => {
@@ -566,16 +638,13 @@ export default function LiveSubtitleWidget({
       container.id = 'pip-subtitle-root';
       container.style.width = '100vw';
       container.style.height = '100vh';
-      container.style.backgroundColor = '#0b0f19';
-      container.style.color = '#ffffff';
+      container.style.backgroundColor = 'transparent';
       container.style.display = 'flex';
       container.style.flexDirection = 'column';
       container.style.alignItems = 'center';
       container.style.justifyContent = 'center';
-      container.style.padding = '12px 20px';
       container.style.boxSizing = 'border-box';
       container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-      pipWindow.document.body.style.margin = '0';
       pipWindow.document.body.appendChild(container);
       pipContainerRef.current = container;
 
@@ -674,22 +743,31 @@ export default function LiveSubtitleWidget({
             </button>
           </div>
 
-          {/* Model Mode Toggle: Base (Chính xác cao 🎯) vs Tiny (Siêu tốc ⚡) */}
+          {/* Model Speed vs Accuracy Switch */}
           <button
-            onClick={() => setWhisperModel(whisperModel === 'base' ? 'tiny' : 'base')}
+            onClick={() => setWhisperModel(whisperModel === 'tiny' ? 'base' : 'tiny')}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
-              whisperModel === 'base'
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm shadow-amber-500/10'
-                : 'bg-dark-950 text-slate-400 border-dark-800 hover:text-white'
+              whisperModel === 'tiny'
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-500/10'
+                : 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm shadow-amber-500/10'
             }`}
             title={
-              whisperModel === 'base'
-                ? 'Đang dùng Model Base (Chính xác cao): Nhận dạng chuẩn từng chữ, phân biệt nhân vật và tên riêng'
-                : 'Đang dùng Model Tiny (Siêu tốc): Tối ưu độ trễ thấp nhất cho máy cấu hình yếu'
+              whisperModel === 'tiny'
+                ? 'Chế độ Siêu Tốc (Tiny): Phản hồi sau ~0.4s, khớp video nhất'
+                : 'Chế độ Chính Xác Cao (Base): Chuẩn từng từ, phân biệt tên riêng'
             }
           >
-            <Sparkles className={`w-3.5 h-3.5 ${whisperModel === 'base' ? 'text-amber-400 fill-amber-400/20' : ''}`} />
-            <span>{whisperModel === 'base' ? '🎯 Chuẩn từng chữ (Base)' : '⚡ Siêu tốc (Tiny)'}</span>
+            {whisperModel === 'tiny' ? (
+              <>
+                <Zap className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400/20" />
+                <span>⚡ Siêu tốc & Khớp video (Tiny)</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5 text-amber-400 fill-amber-400/20" />
+                <span>🎯 Chuẩn từng chữ (Base)</span>
+              </>
+            )}
           </button>
 
           {/* Mic Device Selector dropdown if 'mic' source selected */}
@@ -766,10 +844,10 @@ export default function LiveSubtitleWidget({
                 ? 'bg-purple-600 text-white border-purple-500 ring-2 ring-purple-400/30'
                 : 'bg-dark-950 border-dark-800 text-slate-300 hover:text-white hover:border-dark-700'
             }`}
-            title="Tách thanh phụ đề thành Cửa sổ Nổi Luôn Nằm Trên Cùng (Always-on-top PiP) để xem cùng lúc với Zoom, VLC, game"
+            title="Tách thanh phụ đề thành Cửa sổ Nổi Mini Trong Suốt (Always-on-top PiP) để xem cùng lúc với Zoom, VLC, game"
           >
             <ExternalLink className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Cửa sổ nổi PiP</span>
+            <span className="hidden sm:inline">Cửa sổ nổi PiP (Trong suốt)</span>
           </button>
 
           {/* Floating mode toggle */}
@@ -794,7 +872,7 @@ export default function LiveSubtitleWidget({
                 ? 'bg-dark-800 text-white border-accent-500'
                 : 'bg-dark-950 border-dark-800 text-slate-400 hover:text-white'
             }`}
-            title="Tùy chỉnh kiểu chữ & hiển thị"
+            title="Tùy chỉnh độ trong suốt & kiểu chữ"
           >
             <Settings2 className="w-4 h-4" />
           </button>
@@ -816,14 +894,14 @@ export default function LiveSubtitleWidget({
         <div className="flex items-center space-x-2">
           <Info className="w-4 h-4 text-purple-400 shrink-0" />
           <span>
-            <b>Tự động ngắt nhịp câu:</b> Hệ thống tự động phát hiện khoảng ngừng câu để dịch ngay sau ~1s và đồng bộ mốc thời gian video khớp từng từ!
+            <b>Cửa sổ nổi PiP:</b> Đã được thu nhỏ gọn gàng và làm trong suốt để không che khuất khung hình xem phim!
           </span>
         </div>
         <button
           onClick={() => setShowAudioHelpModal(true)}
           className="text-xs text-accent-400 hover:text-accent-300 font-medium underline underline-offset-2 shrink-0 ml-2"
         >
-          Xem hướng dẫn chia sẻ âm thanh
+          Hướng dẫn chia sẻ âm thanh
         </button>
       </div>
 
@@ -848,7 +926,7 @@ export default function LiveSubtitleWidget({
           {/* Font Size */}
           <div className="flex items-center space-x-2">
             <span className="font-semibold text-slate-400 uppercase text-[10px]">Cỡ chữ:</span>
-            {[18, 22, 26, 32].map((sz) => (
+            {[16, 18, 20, 24].map((sz) => (
               <button
                 key={sz}
                 onClick={() => setFontSize(sz)}
@@ -889,8 +967,8 @@ export default function LiveSubtitleWidget({
             <span className="font-semibold text-slate-400 uppercase text-[10px]">Độ trong suốt nền:</span>
             <input
               type="range"
-              min="20"
-              max="100"
+              min="10"
+              max="90"
               step="5"
               value={bgOpacity}
               onChange={(e) => setBgOpacity(Number(e.target.value))}
@@ -910,7 +988,7 @@ export default function LiveSubtitleWidget({
         }`}
       >
         <div
-          className="rounded-2xl p-5 border shadow-2xl transition-all duration-200 backdrop-blur-md"
+          className="rounded-2xl p-4 border shadow-2xl transition-all duration-200 backdrop-blur-md"
           style={{
             backgroundColor: `rgba(11, 15, 25, ${bgOpacity / 100})`,
             borderColor: isSpeechActive ? 'rgba(16, 185, 129, 0.4)' : 'rgba(30, 41, 59, 0.8)',
@@ -918,7 +996,7 @@ export default function LiveSubtitleWidget({
           }}
         >
           {/* Status Header inside widget */}
-          <div className="flex items-center justify-between text-xs pb-1 border-b border-dark-800/50 mb-2">
+          <div className="flex items-center justify-between text-xs pb-1 border-b border-dark-800/50 mb-1.5">
             <div className="flex items-center space-x-2">
               <span
                 className={`w-2 h-2 rounded-full ${
@@ -932,8 +1010,8 @@ export default function LiveSubtitleWidget({
                   ? isSpeechActive ? '🎙️ Đang nói...' : 'Đang lắng nghe'
                   : 'Sẵn sàng'}
               </span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-dark-800 text-amber-300 font-mono font-bold">
-                {whisperModel === 'base' ? '🎯 BASE' : '⚡ TINY'}
+              <span className="px-1.5 py-0.5 rounded text-[10px] bg-dark-800 text-emerald-300 font-mono font-bold">
+                {whisperModel === 'tiny' ? '⚡ SIÊU TỐC' : '🎯 BASE'}
               </span>
               {detectedLang && (
                 <span className="px-1.5 py-0.5 rounded text-[10px] bg-dark-800 text-slate-300 font-mono uppercase">
@@ -951,12 +1029,12 @@ export default function LiveSubtitleWidget({
           </div>
 
           {/* Subtitle Content Display Area */}
-          <div className="py-2 min-h-[72px] flex flex-col justify-center items-center text-center space-y-1.5">
+          <div className="py-1 min-h-[60px] flex flex-col justify-center items-center text-center space-y-1">
             {/* Original Spoken Text (Bilingual Mode) */}
             {isBilingual && currentOriginal && (
               <p
                 className="text-slate-400/90 font-medium italic transition-opacity duration-200"
-                style={{ fontSize: `${Math.max(13, fontSize - 7)}px` }}
+                style={{ fontSize: `${Math.max(12, fontSize - 7)}px` }}
               >
                 "{currentOriginal}"
               </p>
@@ -968,7 +1046,7 @@ export default function LiveSubtitleWidget({
               style={{
                 fontSize: `${fontSize}px`,
                 color: fontColor,
-                lineHeight: 1.35,
+                lineHeight: 1.3,
                 textShadow: '0 2px 8px rgba(0, 0, 0, 0.95), 0 0 20px rgba(0,0,0,0.5)'
               }}
             >
@@ -1100,7 +1178,7 @@ export default function LiveSubtitleWidget({
                   Để vừa dùng app khác vừa đọc được phụ đề:
                 </div>
                 <p className="text-slate-400 pl-6 leading-relaxed">
-                  Bấm nút <b>"Cửa sổ nổi PiP" (màu tím)</b>: Thanh phụ đề sẽ tách ra thành một cửa sổ mini luôn ghim trên cùng màn hình máy tính của bạn (đè lên trên Zoom, VLC, game).
+                  Bấm nút <b>"Cửa sổ nổi PiP (Trong suốt)"</b>: Thanh phụ đề sẽ tách ra thành một cửa sổ mini mờ trong suốt luôn ghim trên cùng màn hình máy tính của bạn (đè lên trên Zoom, VLC, game mà không che khuất màn hình).
                 </p>
               </div>
             </div>

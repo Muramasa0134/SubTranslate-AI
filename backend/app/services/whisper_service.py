@@ -1,3 +1,4 @@
+import os
 import logging
 import av
 from pathlib import Path
@@ -31,24 +32,25 @@ class WhisperService:
     def get_model(cls, model_size: Optional[str] = None) -> WhisperModel:
         """Singleton loader for WhisperModel to prevent redundant re-loading into memory."""
         target_model = model_size or settings.WHISPER_MODEL
+        num_threads = min(6, os.cpu_count() or 4)
         
         if cls._instance is None or cls._loaded_model_name != target_model:
-            logger.info(f"Loading faster-whisper model '{target_model}' on {settings.WHISPER_DEVICE} ({settings.WHISPER_COMPUTE_TYPE})...")
+            logger.info(f"Loading faster-whisper model '{target_model}' on {settings.WHISPER_DEVICE} ({settings.WHISPER_COMPUTE_TYPE}) with {num_threads} CPU threads...")
             try:
                 cls._instance = WhisperModel(
                     target_model,
                     device=settings.WHISPER_DEVICE,
                     compute_type=settings.WHISPER_COMPUTE_TYPE,
-                    cpu_threads=4
+                    cpu_threads=num_threads
                 )
                 cls._loaded_model_name = target_model
-                logger.info(f"faster-whisper model '{target_model}' loaded successfully with 4 CPU threads.")
+                logger.info(f"faster-whisper model '{target_model}' loaded successfully with {num_threads} CPU threads.")
             except Exception as e:
                 logger.error(f"Failed to load Whisper model: {e}")
                 # Fallback to int8 on CPU if target failed
                 if settings.WHISPER_DEVICE != "cpu":
                     logger.info("Falling back to CPU device...")
-                    cls._instance = WhisperModel(target_model, device="cpu", compute_type="int8")
+                    cls._instance = WhisperModel(target_model, device="cpu", compute_type="int8", cpu_threads=num_threads)
                     cls._loaded_model_name = target_model
                 else:
                     raise e

@@ -122,11 +122,12 @@ class LiveTranslationService:
             language=lang,
             initial_prompt=initial_prompt,
             beam_size=1,
+            best_of=1,
             temperature=0.0,
             vad_filter=True,
             vad_parameters=dict(
-                min_silence_duration_ms=180,
-                threshold=0.3
+                min_silence_duration_ms=100,
+                threshold=0.28
             ),
             condition_on_previous_text=False
         )
@@ -172,7 +173,7 @@ class LiveTranslationService:
         api_key: Optional[str] = None
     ) -> str:
         """
-        Translates live detected speech in ultra-low latency (<0.8s) using Gemini 3.5 Flash Lite
+        Translates live detected speech in ultra-low latency (<0.4s) using Gemini 3.5 Flash Lite
         with natural conversational nuance and concise subtitle formatting.
         """
         if not text or not text.strip():
@@ -184,20 +185,11 @@ class LiveTranslationService:
 
         context_prompt = ""
         if prev_context and prev_context.strip():
-            context_prompt = f"Recent spoken context: \"{prev_context.strip()}\"\n"
+            context_prompt = f"Ngữ cảnh trước: \"{prev_context.strip()[:100]}\"\n"
 
-        prompt = f"""You are an elite live video subtitle translator.
-Translate the following live spoken line into concise, natural, expressive {target_lang}.
-
-Style Guidelines ({style}):
-- Spoken Flow: Natural Vietnamese phrasing with context-appropriate pronouns (ta/ngươi/tôi/cậu/anh/em/hắn).
-- Subtitle Precision: Match the exact speaker tone and meaning. Keep length punchy and readable at a glance.
-- Clean Output: Output ONLY the translated sentence. No explanations, no quotes, no labels.
-
-{context_prompt}
-Spoken line to translate:
-"{text.strip()}"
-"""
+        prompt = f"""Dịch câu phụ đề sau sang {target_lang} ngắn gọn, tự nhiên, biểu cảm ({style}):
+{context_prompt}"{text.strip()}"
+Quy tắc: Đại từ xưng hô tự nhiên, không giải thích hay mở ngoặc, chỉ trả về duy nhất 1 câu dịch."""
 
         models_to_try = [settings.GEMINI_MODEL or "gemini-3.5-flash-lite", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
         for m in models_to_try:
@@ -206,7 +198,7 @@ Spoken line to translate:
                     model=m,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        temperature=0.3,
+                        temperature=0.2,
                         thinking_config=types.ThinkingConfig(thinking_budget=0)
                     )
                 )
@@ -217,7 +209,7 @@ Spoken line to translate:
                     res = client.models.generate_content(
                         model=m,
                         contents=prompt,
-                        config=types.GenerateContentConfig(temperature=0.3)
+                        config=types.GenerateContentConfig(temperature=0.2)
                     )
                     if res and res.text:
                         return res.text.strip().strip('"')

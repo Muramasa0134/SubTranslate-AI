@@ -35,7 +35,7 @@ for idx, (start_sec, dur_sec) in enumerate(slices, 1):
             'source_language': 'auto',
             'target_language': 'vi',
             'translation_style': 'anime',
-            'whisper_model': 'base',
+            'whisper_model': 'tiny',
             'prev_context': prev_context
         }
     )
