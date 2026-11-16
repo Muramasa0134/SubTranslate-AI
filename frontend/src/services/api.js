@@ -160,4 +160,28 @@ export const deleteHistoryItem = async (jobId) => {
   return response.data;
 };
 
+// Live Real-Time Subtitle Translation
+export const liveTranslateChunk = async ({
+  audioBlob,
+  sourceLanguage = 'auto',
+  targetLanguage = 'vi',
+  translationStyle = 'cinematic',
+  prevContext = '',
+  apiKey = ''
+}) => {
+  const formData = new FormData();
+  formData.append('audio', audioBlob, 'live_chunk.webm');
+  formData.append('source_language', sourceLanguage);
+  formData.append('target_language', targetLanguage);
+  if (translationStyle) formData.append('translation_style', translationStyle);
+  if (prevContext) formData.append('prev_context', prevContext);
+  if (apiKey) formData.append('api_key', apiKey);
+
+  const response = await api.post('/live/translate-chunk', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 15000
+  });
+  return response.data;
+};
+
 export default api;

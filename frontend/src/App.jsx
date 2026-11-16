@@ -6,6 +6,7 @@ import ApiKeyModal from './components/ApiKeyModal';
 import Home from './pages/Home';
 import Dashboard from './pages/Dashboard';
 import TranslatePage from './pages/TranslatePage';
+import LiveWidgetPage from './pages/LiveWidgetPage';
 import HistoryPage from './pages/HistoryPage';
 import HistoryDetailPage from './pages/HistoryDetailPage';
 import { getConfig } from './services/api';
@@ -59,6 +60,15 @@ export default function App() {
               path="/translate"
               element={
                 <TranslatePage
+                  config={config}
+                  onOpenKeyModal={() => setIsKeyModalOpen(true)}
+                />
+              }
+            />
+            <Route
+              path="/live-widget"
+              element={
+                <LiveWidgetPage
                   config={config}
                   onOpenKeyModal={() => setIsKeyModalOpen(true)}
                 />

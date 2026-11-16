@@ -11,7 +11,8 @@ import {
   History, 
   ShieldCheck, 
   Zap,
-  Play
+  Play,
+  Radio
 } from 'lucide-react';
 
 export default function Home({ config, onOpenKeyModal }) {
@@ -95,11 +96,11 @@ export default function Home({ config, onOpenKeyModal }) {
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link
-              to="/translate"
-              className="px-6 py-3.5 rounded-xl font-bold text-sm bg-gradient-to-r from-primary-600 via-primary-500 to-accent-600 hover:from-primary-500 hover:to-accent-500 text-white shadow-lg shadow-primary-600/25 flex items-center space-x-2 transition-all hover:scale-105"
+              to="/live-widget"
+              className="px-6 py-3.5 rounded-xl font-bold text-sm bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white shadow-lg shadow-emerald-500/25 flex items-center space-x-2 transition-all hover:scale-105"
             >
-              <Subtitles className="w-4 h-4" />
-              <span>Dịch file SRT</span>
+              <Radio className="w-4 h-4 animate-pulse" />
+              <span>Mở Live Subtitle Widget (Mới)</span>
               <ArrowRight className="w-4 h-4" />
             </Link>
 

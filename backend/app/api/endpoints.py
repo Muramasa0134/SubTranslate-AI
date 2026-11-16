@@ -4,7 +4,7 @@ import shutil
 import logging
 from pathlib import Path
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, FileResponse
 from sqlalchemy.orm import Session
 
@@ -30,6 +30,7 @@ from app.services.audio_service import AudioService
 from app.services.whisper_service import WhisperService
 from app.services.video_service import VideoService
 from app.services.history_service import HistoryService
+from app.services.live_service import LiveTranslationService
 
 logger = logging.getLogger(__name__)
 
@@ -612,3 +613,125 @@ def delete_history_item(job_id: str, db: Session = Depends(get_db)):
 
     HistoryService.delete_by_job_id(db, job_id)
     return {"message": "Record deleted successfully."}
+
+
+# -------------------------------------------------------------
+# Live Real-Time Subtitle Widget Endpoints
+# -------------------------------------------------------------
+
+@router.post("/live/translate-chunk")
+async def live_translate_chunk(
+    audio: UploadFile = File(...),
+    source_language: str = Form("auto"),
+    target_language: str = Form("vi"),
+    translation_style: str = Form("cinematic"),
+    prev_context: Optional[str] = Form(None),
+    api_key: Optional[str] = Form(None)
+):
+    """
+    Ultra-low-latency endpoint for live video audio chunks.
+    Decodes audio chunk in memory, runs Whisper voice detection,
+    and streams back translated subtitle text in real-time.
+    """
+    raw_bytes = await audio.read()
+    if not raw_bytes or len(raw_bytes) < 200:
+        return {"is_speech": False, "original_text": "", "translated_text": ""}
+
+    # Step 1: In-memory audio decode to 16kHz float32
+    audio_np = LiveTranslationService.decode_audio_bytes(raw_bytes)
+    if len(audio_np) == 0:
+        return {"is_speech": False, "original_text": "", "translated_text": ""}
+
+    # Step 2: Whisper fast speech detection & transcription
+    trans_res = LiveTranslationService.transcribe_chunk(audio_np, source_language=source_language)
+    if not trans_res.get("is_speech") or not trans_res.get("text"):
+        return {
+            "is_speech": False,
+            "original_text": "",
+            "translated_text": "",
+            "detected_language": trans_res.get("language", "auto")
+        }
+
+    original_text = trans_res["text"]
+
+    # Step 3: Fast contextual translation with Gemini 3.5 Flash
+    translated_text = LiveTranslationService.translate_live_text(
+        text=original_text,
+        source_lang=source_language,
+        target_lang=target_language,
+        style=translation_style,
+        prev_context=prev_context,
+        api_key=api_key
+    )
+
+    return {
+        "is_speech": True,
+        "original_text": original_text,
+        "translated_text": translated_text or original_text,
+        "detected_language": trans_res.get("language", "auto")
+    }
+
+
+@router.websocket("/live/ws")
+async def live_websocket_stream(websocket: WebSocket):
+    """
+    Bi-directional streaming WebSocket for live video subtitle widget.
+    Clients send raw audio bytes (WebM/WAV) or JSON config, and receive live subtitles instantly.
+    """
+    await websocket.accept()
+    source_lang = "auto"
+    target_lang = "vi"
+    style = "cinematic"
+    prev_context = ""
+    api_key = None
+
+    try:
+        while True:
+            message = await websocket.receive()
+            if "bytes" in message and message["bytes"]:
+                raw_bytes = message["bytes"]
+                audio_np = LiveTranslationService.decode_audio_bytes(raw_bytes)
+                if len(audio_np) > 0:
+                    trans_res = LiveTranslationService.transcribe_chunk(audio_np, source_language=source_lang)
+                    if trans_res.get("is_speech") and trans_res.get("text"):
+                        orig = trans_res["text"]
+                        trans = LiveTranslationService.translate_live_text(
+                            text=orig,
+                            source_lang=source_lang,
+                            target_lang=target_lang,
+                            style=style,
+                            prev_context=prev_context,
+                            api_key=api_key
+                        )
+                        prev_context = orig
+                        await websocket.send_json({
+                            "type": "subtitle",
+                            "is_speech": True,
+                            "original_text": orig,
+                            "translated_text": trans,
+                            "detected_language": trans_res.get("language", "auto")
+                        })
+                    else:
+                        await websocket.send_json({"type": "silence", "is_speech": False})
+
+            elif "text" in message and message["text"]:
+                import json
+                try:
+                    cfg = json.loads(message["text"])
+                    if cfg.get("type") == "config":
+                        source_lang = cfg.get("source_language", source_lang)
+                        target_lang = cfg.get("target_language", target_lang)
+                        style = cfg.get("translation_style", style)
+                        api_key = cfg.get("api_key", api_key)
+                        await websocket.send_json({"type": "config_ack", "status": "ok"})
+                except Exception:
+                    pass
+
+    except WebSocketDisconnect:
+        logger.info("Live subtitle WebSocket disconnected.")
+    except Exception as e:
+        logger.warning(f"Live subtitle WebSocket exception: {e}")
+        try:
+            await websocket.close()
+        except Exception:
+            pass

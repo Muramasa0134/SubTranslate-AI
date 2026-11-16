@@ -8,7 +8,8 @@ import {
   Key, 
   CheckCircle2, 
   AlertCircle,
-  Sparkles
+  Sparkles,
+  Radio
 } from 'lucide-react';
 
 export default function Navbar({ config, onOpenKeyModal }) {
@@ -16,8 +17,9 @@ export default function Navbar({ config, onOpenKeyModal }) {
 
   const navItems = [
     { name: 'Home', path: '/', icon: Sparkles },
-    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+    { name: 'Live Widget', path: '/live-widget', icon: Radio, isLive: true },
     { name: 'Translate', path: '/translate', icon: Languages },
+    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
     { name: 'History', path: '/history', icon: History },
   ];
 
@@ -55,8 +57,13 @@ export default function Navbar({ config, onOpenKeyModal }) {
                     : 'text-slate-300 hover:text-white hover:bg-dark-800'
                 }`}
               >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-accent-400' : 'text-slate-400'}`} />
+                <Icon className={`w-4 h-4 ${item.isLive ? 'text-red-400 animate-pulse' : isActive ? 'text-accent-400' : 'text-slate-400'}`} />
                 <span>{item.name}</span>
+                {item.isLive && (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded-full font-extrabold uppercase bg-red-500/20 text-red-400 border border-red-500/30">
+                    LIVE
+                  </span>
+                )}
               </Link>
             );
           })}
