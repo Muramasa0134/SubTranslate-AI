@@ -26,17 +26,26 @@ import {
   Info,
   HelpCircle,
   CheckCircle2,
+  Zap,
+  Target,
   X
 } from 'lucide-react';
 import { liveTranslateChunk } from '../services/api';
 import { encodeWAV } from '../utils/audioEncoder';
+
+function formatSecondsToMmSs(totalSec) {
+  const safeSec = Math.max(0, Math.floor(totalSec || 0));
+  const mins = String(Math.floor(safeSec / 60)).padStart(2, '0');
+  const secs = String(safeSec % 60).padStart(2, '0');
+  return `${mins}:${secs}`;
+}
 
 function formatSecondsToSrtTime(totalSec) {
   const safeSec = Math.max(0, totalSec || 0);
   const hrs = String(Math.floor(safeSec / 3600)).padStart(2, '0');
   const mins = String(Math.floor((safeSec % 3600) / 60)).padStart(2, '0');
   const secs = String(Math.floor(safeSec % 60)).padStart(2, '0');
-  const ms = '000';
+  const ms = String(Math.floor((safeSec % 1) * 1000)).padStart(3, '0');
   return `${hrs}:${mins}:${secs},${ms}`;
 }
 
@@ -56,6 +65,7 @@ export default function LiveSubtitleWidget({
   // Capture states
   const [isListening, setIsListening] = useState(false);
   const [captureSource, setCaptureSource] = useState(localVideoLoaded ? 'video' : 'display'); // 'video', 'display', 'mic'
+  const [whisperModel, setWhisperModel] = useState('base'); // 'base' (Chính xác cao 🎯), 'tiny' (Siêu tốc ⚡)
   const [currentOriginal, setCurrentOriginal] = useState('');
   const [currentTranslated, setCurrentTranslated] = useState('Đang chờ phát hiện âm thanh từ video...');
   const [detectedLang, setDetectedLang] = useState('');
@@ -90,11 +100,21 @@ export default function LiveSubtitleWidget({
   const accumulatedSamplesRef = useRef(0);
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
-  const prevContextRef = useRef('');
   const isProcessingChunkRef = useRef(false);
   const pipWindowRef = useRef(null);
   const pipContainerRef = useRef(null);
   const sessionStartTimeRef = useRef(null);
+
+  // Helper to obtain current high-precision timestamp
+  const getCurrentTimePos = useCallback(() => {
+    if (videoElementRef?.current && !isNaN(videoElementRef.current.currentTime)) {
+      return videoElementRef.current.currentTime;
+    }
+    if (sessionStartTimeRef.current) {
+      return (Date.now() - sessionStartTimeRef.current) / 1000;
+    }
+    return 0;
+  }, [videoElementRef]);
 
   // Enumerate audio input devices (e.g. Stereo Mix, External Mic, Headset)
   useEffect(() => {
@@ -159,7 +179,7 @@ export default function LiveSubtitleWidget({
     setAudioLevel(0);
   };
 
-  // Start Capturing Audio
+  // Start Capturing Audio with Adaptive Speech & Silence VAD Slicing
   const startListening = async (overrideSource) => {
     const activeSource = overrideSource || captureSource;
     try {
@@ -167,7 +187,6 @@ export default function LiveSubtitleWidget({
       let audioTracks = [];
 
       if (activeSource === 'video') {
-        // Capture audio directly from in-app HTML5 video element
         const vid = videoElementRef?.current;
         if (!vid) {
           alert('Vui lòng mở một video trong trình phát trước khi chọn nguồn này.');
@@ -187,7 +206,6 @@ export default function LiveSubtitleWidget({
           console.warn('captureStream on video element failed:', e);
         }
 
-        // If video element captureStream had no audio track, fallback to display capture
         if (audioTracks.length === 0) {
           try {
             rawStream = await navigator.mediaDevices.getDisplayMedia({
@@ -209,7 +227,6 @@ export default function LiveSubtitleWidget({
           }
         }
       } else if (activeSource === 'display') {
-        // Capture tab / screen audio (e.g. YouTube, Netflix, Zoom, VLC, Teams)
         try {
           rawStream = await navigator.mediaDevices.getDisplayMedia({
             video: {
@@ -232,14 +249,12 @@ export default function LiveSubtitleWidget({
 
         audioTracks = rawStream.getAudioTracks();
 
-        // Check if user selected audio checkbox in Chrome picker
         if (audioTracks.length === 0) {
           setShowAudioHelpModal(true);
           rawStream.getTracks().forEach((t) => t.stop());
           return;
         }
       } else if (activeSource === 'mic') {
-        // Capture microphone / Stereo Mix / speaker loopback
         const audioConstraints = {
           echoCancellation: false,
           noiseSuppression: false,
@@ -261,7 +276,6 @@ export default function LiveSubtitleWidget({
 
       mediaStreamRef.current = rawStream;
 
-      // Handle stream stop by user from browser UI bar
       rawStream.getVideoTracks().forEach((track) => {
         track.onended = () => stopListening();
       });
@@ -269,12 +283,10 @@ export default function LiveSubtitleWidget({
         track.onended = () => stopListening();
       });
 
-      // Extract isolated audio-only stream
       const audioOnlyStream = new MediaStream(audioTracks);
-
       startAudioVisualizer(audioOnlyStream);
 
-      // Start Web Audio PCM stream (Produces 100% valid 16kHz WAV slices with zero container demux errors)
+      // Web Audio PCM Engine with Intelligent Dynamic VAD Slicing
       try {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         const pcmCtx = new AudioCtx();
@@ -287,14 +299,55 @@ export default function LiveSubtitleWidget({
 
         pcmBufferRef.current = [];
         accumulatedSamplesRef.current = 0;
-        const targetSamples = Math.round(pcmCtx.sampleRate * 3.0); // Exactly 3.0 seconds
+        let hasSpeechInSlice = false;
+        let silenceConsecutiveFrames = 0;
+        let sliceStartSec = getCurrentTimePos();
+
+        // Minimum 0.85s of audio before slicing on natural pause
+        const minSpeechSamples = Math.round(pcmCtx.sampleRate * 0.85);
+        // Maximum 3.0s slice cap to prevent delay
+        const maxSliceSamples = Math.round(pcmCtx.sampleRate * 3.0);
 
         processor.onaudioprocess = (e) => {
           const inputData = e.inputBuffer.getChannelData(0);
+
+          // Real-time RMS calculation for Voice Activity Detection
+          let sumSquares = 0;
+          for (let i = 0; i < inputData.length; i++) {
+            sumSquares += inputData[i] * inputData[i];
+          }
+          const frameRms = Math.sqrt(sumSquares / inputData.length);
+
+          if (frameRms > 0.006) {
+            hasSpeechInSlice = true;
+            silenceConsecutiveFrames = 0;
+          } else if (hasSpeechInSlice) {
+            silenceConsecutiveFrames++;
+          }
+
           pcmBufferRef.current.push(new Float32Array(inputData));
           accumulatedSamplesRef.current += inputData.length;
 
-          if (accumulatedSamplesRef.current >= targetSamples) {
+          const currentSamples = accumulatedSamplesRef.current;
+          let shouldFlush = false;
+
+          // Condition 1: Natural sentence pause (speaker stopped talking for ~300ms after speech)
+          if (hasSpeechInSlice && currentSamples >= minSpeechSamples && silenceConsecutiveFrames >= 3) {
+            shouldFlush = true;
+          }
+          // Condition 2: Maximum speech chunk duration reached (3.0s)
+          else if (currentSamples >= maxSliceSamples) {
+            shouldFlush = true;
+          }
+          // Condition 3: Pure continuous silence (discard buffer after 2.5s to save CPU & avoid empty API calls)
+          else if (!hasSpeechInSlice && currentSamples >= pcmCtx.sampleRate * 2.5) {
+            pcmBufferRef.current = [];
+            accumulatedSamplesRef.current = 0;
+            sliceStartSec = getCurrentTimePos();
+          }
+
+          if (shouldFlush && pcmBufferRef.current.length > 0) {
+            const sliceEndSec = getCurrentTimePos();
             const total = accumulatedSamplesRef.current;
             const merged = new Float32Array(total);
             let offset = 0;
@@ -302,23 +355,31 @@ export default function LiveSubtitleWidget({
               merged.set(chunk, offset);
               offset += chunk.length;
             }
+
+            // Reset accumulator for next slice
             pcmBufferRef.current = [];
             accumulatedSamplesRef.current = 0;
+            const hadVoice = hasSpeechInSlice;
+            hasSpeechInSlice = false;
+            silenceConsecutiveFrames = 0;
 
-            // Convert to 16-bit PCM WAV Blob
-            const wavBlob = encodeWAV(merged, pcmCtx.sampleRate);
-            handleAudioChunk(wavBlob);
+            const curStart = sliceStartSec;
+            sliceStartSec = sliceEndSec;
+
+            if (hadVoice) {
+              const wavBlob = encodeWAV(merged, pcmCtx.sampleRate);
+              handleAudioChunk(wavBlob, curStart, sliceEndSec);
+            }
           }
         };
 
-        // Connect source -> processor -> silent gain -> destination
         const silentGain = pcmCtx.createGain();
         silentGain.gain.value = 0;
         sourceNode.connect(processor);
         processor.connect(silentGain);
         silentGain.connect(pcmCtx.destination);
       } catch (pcmErr) {
-        console.warn('Web Audio PCM init failed, falling back:', pcmErr);
+        console.warn('Web Audio PCM init failed:', pcmErr);
       }
 
       sessionStartTimeRef.current = Date.now();
@@ -334,18 +395,22 @@ export default function LiveSubtitleWidget({
     }
   };
 
-  // Process incoming audio chunk
-  const handleAudioChunk = async (blob) => {
+  // Process incoming audio chunk with exact boundary alignment
+  const handleAudioChunk = async (blob, sliceStartSec, sliceEndSec) => {
     if (isProcessingChunkRef.current) return;
     isProcessingChunkRef.current = true;
 
     try {
+      // Build sliding context window from last 2 entries
+      const contextWindow = liveHistory.slice(0, 2).map((e) => e.original).reverse().join(' ');
+
       const result = await liveTranslateChunk({
         audioBlob: blob,
         sourceLanguage: sourceLang,
         targetLanguage: targetLang,
         translationStyle: translationStyle,
-        prevContext: prevContextRef.current,
+        whisperModel: whisperModel,
+        prevContext: contextWindow,
         apiKey: apiKey
       });
 
@@ -354,51 +419,33 @@ export default function LiveSubtitleWidget({
         setCurrentOriginal(result.original_text);
         setCurrentTranslated(result.translated_text || result.original_text);
         setDetectedLang(result.detected_language);
-        prevContextRef.current = result.original_text;
 
-        const now = Date.now();
-        const startSec = sessionStartTimeRef.current
-          ? Math.max(0, Math.floor((now - sessionStartTimeRef.current - 3000) / 1000))
-          : 0;
-        const endSec = sessionStartTimeRef.current
-          ? Math.floor((now - sessionStartTimeRef.current) / 1000)
-          : startSec + 3;
+        const chunkDuration = Math.max(0.4, sliceEndSec - sliceStartSec);
+        // Exact video timestamp alignment down to milliseconds using Whisper speech boundaries
+        const exactSpeechStart = Math.max(0, sliceStartSec + (result.speech_start || 0));
+        const exactSpeechEnd = Math.max(
+          exactSpeechStart + 0.4,
+          sliceStartSec + (result.speech_end || chunkDuration)
+        );
 
-        let timestampDisplay = '';
-        let startSrt = '';
-        let endSrt = '';
-
-        if (videoElementRef?.current && !isNaN(videoElementRef.current.currentTime)) {
-          const vidCurrent = videoElementRef.current.currentTime;
-          const vStart = Math.max(0, vidCurrent - 3);
-          const vEnd = vidCurrent;
-          const min = String(Math.floor(vStart / 60)).padStart(2, '0');
-          const sec = String(Math.floor(vStart % 60)).padStart(2, '0');
-          timestampDisplay = `${min}:${sec}`;
-          startSrt = formatSecondsToSrtTime(vStart);
-          endSrt = formatSecondsToSrtTime(vEnd);
-        } else {
-          const min = String(Math.floor(startSec / 60)).padStart(2, '0');
-          const sec = String(Math.floor(startSec % 60)).padStart(2, '0');
-          timestampDisplay = `${min}:${sec}`;
-          startSrt = formatSecondsToSrtTime(startSec);
-          endSrt = formatSecondsToSrtTime(endSec);
-        }
+        const timestampDisplay = `${formatSecondsToMmSs(exactSpeechStart)} ➔ ${formatSecondsToMmSs(exactSpeechEnd)}`;
+        const startSrt = formatSecondsToSrtTime(exactSpeechStart);
+        const endSrt = formatSecondsToSrtTime(exactSpeechEnd);
 
         // Push to live history
         const newEntry = {
-          id: now,
+          id: Date.now(),
           time: new Date().toLocaleTimeString(),
           timestamp: timestampDisplay,
-          startSec,
-          endSec,
+          startSec: exactSpeechStart,
+          endSec: exactSpeechEnd,
           startSrt,
           endSrt,
           original: result.original_text,
           translated: result.translated_text || result.original_text,
           lang: result.detected_language
         };
-        setLiveHistory(prev => [newEntry, ...prev.slice(0, 199)]);
+        setLiveHistory((prev) => [newEntry, ...prev.slice(0, 199)]);
         if (onSpeechStatusChange) {
           onSpeechStatusChange(true, newEntry);
         }
@@ -453,7 +500,8 @@ export default function LiveSubtitleWidget({
     c.innerHTML = `
       <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #94a3b8; margin-bottom: 6px; display: flex; align-items: center; justify-content: center; gap: 8px;">
         <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${isListening ? (isSpeechActive ? '#10b981' : '#ef4444') : '#64748b'}; box-shadow: 0 0 8px ${isListening ? (isSpeechActive ? '#10b981' : '#ef4444') : 'transparent'};"></span>
-        <span>SubTranslate AI Live ${detectedLang ? `(${detectedLang.toUpperCase()})` : ''}</span>
+        <span>SubTranslate Live ${detectedLang ? `(${detectedLang.toUpperCase()})` : ''}</span>
+        <span style="background: rgba(255,255,255,0.08); padding: 1px 6px; border-radius: 6px; font-size: 10px; color: #cbd5e1;">${whisperModel === 'base' ? '🎯 Base' : '⚡ Tiny'}</span>
         ${isSpeechActive ? '<span style="color: #10b981; font-weight: 700; background: rgba(16, 185, 129, 0.15); padding: 1px 6px; border-radius: 8px;">🎙️ Đang nói</span>' : ''}
       </div>
       ${isBilingual && currentOriginal ? `
@@ -465,9 +513,9 @@ export default function LiveSubtitleWidget({
         ${currentTranslated}
       </div>
     `;
-  }, [isListening, isSpeechActive, detectedLang, isBilingual, currentOriginal, fontSize, fontColor, currentTranslated]);
+  }, [isListening, isSpeechActive, detectedLang, isBilingual, currentOriginal, fontSize, fontColor, currentTranslated, whisperModel]);
 
-  // Reactive effect: every time subtitle changes, update PiP window immediately
+  // Reactive effect: update PiP window immediately upon new translation
   useEffect(() => {
     renderPipContent();
   }, [renderPipContent]);
@@ -626,6 +674,24 @@ export default function LiveSubtitleWidget({
             </button>
           </div>
 
+          {/* Model Mode Toggle: Base (Chính xác cao 🎯) vs Tiny (Siêu tốc ⚡) */}
+          <button
+            onClick={() => setWhisperModel(whisperModel === 'base' ? 'tiny' : 'base')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
+              whisperModel === 'base'
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm shadow-amber-500/10'
+                : 'bg-dark-950 text-slate-400 border-dark-800 hover:text-white'
+            }`}
+            title={
+              whisperModel === 'base'
+                ? 'Đang dùng Model Base (Chính xác cao): Nhận dạng chuẩn từng chữ, phân biệt nhân vật và tên riêng'
+                : 'Đang dùng Model Tiny (Siêu tốc): Tối ưu độ trễ thấp nhất cho máy cấu hình yếu'
+            }
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${whisperModel === 'base' ? 'text-amber-400 fill-amber-400/20' : ''}`} />
+            <span>{whisperModel === 'base' ? '🎯 Chuẩn từng chữ (Base)' : '⚡ Siêu tốc (Tiny)'}</span>
+          </button>
+
           {/* Mic Device Selector dropdown if 'mic' source selected */}
           {captureSource === 'mic' && availableMics.length > 1 && (
             <select
@@ -750,14 +816,14 @@ export default function LiveSubtitleWidget({
         <div className="flex items-center space-x-2">
           <Info className="w-4 h-4 text-purple-400 shrink-0" />
           <span>
-            <b>Mẹo dùng song song app khác:</b> Bấm nút <span className="text-purple-300 font-semibold">"Cửa sổ nổi PiP"</span> ở trên để ghim phụ đề nổi trên Zoom, VLC, Teams. Khi chọn chia sẻ màn hình, nhớ tick <span className="text-amber-300 font-semibold">"Chia sẻ âm thanh hệ thống"</span>!
+            <b>Tự động ngắt nhịp câu:</b> Hệ thống tự động phát hiện khoảng ngừng câu để dịch ngay sau ~1s và đồng bộ mốc thời gian video khớp từng từ!
           </span>
         </div>
         <button
           onClick={() => setShowAudioHelpModal(true)}
           className="text-xs text-accent-400 hover:text-accent-300 font-medium underline underline-offset-2 shrink-0 ml-2"
         >
-          Xem hướng dẫn chi tiết
+          Xem hướng dẫn chia sẻ âm thanh
         </button>
       </div>
 
@@ -866,6 +932,9 @@ export default function LiveSubtitleWidget({
                   ? isSpeechActive ? '🎙️ Đang nói...' : 'Đang lắng nghe'
                   : 'Sẵn sàng'}
               </span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] bg-dark-800 text-amber-300 font-mono font-bold">
+                {whisperModel === 'base' ? '🎯 BASE' : '⚡ TINY'}
+              </span>
               {detectedLang && (
                 <span className="px-1.5 py-0.5 rounded text-[10px] bg-dark-800 text-slate-300 font-mono uppercase">
                   {detectedLang}
@@ -952,7 +1021,8 @@ export default function LiveSubtitleWidget({
                 >
                   <div className="space-y-0.5">
                     <div className="flex items-center space-x-2 text-[10px] text-slate-500 font-mono">
-                      <span>{item.time}</span>
+                      <span className="text-cyan-400 font-bold">{item.timestamp}</span>
+                      <span>({item.time})</span>
                       {item.lang && <span className="uppercase text-slate-400">[{item.lang}]</span>}
                     </div>
                     {item.original && (

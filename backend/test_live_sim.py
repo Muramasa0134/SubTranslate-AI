@@ -35,16 +35,19 @@ for idx, (start_sec, dur_sec) in enumerate(slices, 1):
             'source_language': 'auto',
             'target_language': 'vi',
             'translation_style': 'anime',
+            'whisper_model': 'base',
             'prev_context': prev_context
         }
     )
     latency = time.time() - t0
     data = res.json()
     
-    m_start = f"{start_sec // 60:02d}:{start_sec % 60:02d}"
-    m_end = f"{(start_sec + dur_sec) // 60:02d}:{(start_sec + dur_sec) % 60:02d}"
+    exact_start = start_sec + data.get('speech_start', 0.0)
+    exact_end = start_sec + data.get('speech_end', dur_sec)
+    m_start = f"{int(exact_start) // 60:02d}:{int(exact_start) % 60:02d}"
+    m_end = f"{int(exact_end) // 60:02d}:{int(exact_end) % 60:02d}"
     
-    print(f"📍 [CÂU {idx}] Mốc thời gian: [{m_start} --> {m_end}] (Độ trễ: {latency:.2f}s)")
+    print(f"📍 [CÂU {idx}] Mốc thời gian chính xác: [{m_start} --> {m_end}] (Độ trễ: {latency:.2f}s)")
     if data.get('is_speech'):
         print(f"   🎙️ Giọng gốc: \"{data.get('original_text')}\"")
         print(f"   🇻🇳 Phụ đề hiện lên tab bên cạnh: \"{data.get('translated_text')}\"")

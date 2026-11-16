@@ -166,14 +166,16 @@ export const liveTranslateChunk = async ({
   sourceLanguage = 'auto',
   targetLanguage = 'vi',
   translationStyle = 'cinematic',
+  whisperModel = 'tiny',
   prevContext = '',
   apiKey = ''
 }) => {
   const formData = new FormData();
-  formData.append('audio', audioBlob, 'live_chunk.webm');
+  formData.append('audio', audioBlob, 'live_chunk.wav');
   formData.append('source_language', sourceLanguage);
   formData.append('target_language', targetLanguage);
   if (translationStyle) formData.append('translation_style', translationStyle);
+  if (whisperModel) formData.append('whisper_model', whisperModel);
   if (prevContext) formData.append('prev_context', prevContext);
   if (apiKey) formData.append('api_key', apiKey);
 

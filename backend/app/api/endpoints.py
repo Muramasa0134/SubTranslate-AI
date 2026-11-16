@@ -625,36 +625,44 @@ async def live_translate_chunk(
     source_language: str = Form("auto"),
     target_language: str = Form("vi"),
     translation_style: str = Form("cinematic"),
+    whisper_model: Optional[str] = Form(None),
     prev_context: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None)
 ):
     """
     Ultra-low-latency endpoint for live video audio chunks.
-    Decodes audio chunk in memory, runs Whisper voice detection,
-    and streams back translated subtitle text in real-time.
+    Decodes audio chunk in memory, runs Whisper voice detection with prompt conditioning,
+    and streams back translated subtitle text with exact speech timestamps in real-time.
     """
     raw_bytes = await audio.read()
     if not raw_bytes or len(raw_bytes) < 200:
-        return {"is_speech": False, "original_text": "", "translated_text": ""}
+        return {"is_speech": False, "original_text": "", "translated_text": "", "speech_start": 0.0, "speech_end": 0.0}
 
     # Step 1: In-memory audio decode to 16kHz float32
     audio_np = LiveTranslationService.decode_audio_bytes(raw_bytes)
     if len(audio_np) == 0:
-        return {"is_speech": False, "original_text": "", "translated_text": ""}
+        return {"is_speech": False, "original_text": "", "translated_text": "", "speech_start": 0.0, "speech_end": 0.0}
 
-    # Step 2: Whisper fast speech detection & transcription
-    trans_res = LiveTranslationService.transcribe_chunk(audio_np, source_language=source_language)
+    # Step 2: Whisper fast speech detection & transcription with context prompt
+    trans_res = LiveTranslationService.transcribe_chunk(
+        audio_np,
+        source_language=source_language,
+        whisper_model=whisper_model,
+        prev_context=prev_context
+    )
     if not trans_res.get("is_speech") or not trans_res.get("text"):
         return {
             "is_speech": False,
             "original_text": "",
             "translated_text": "",
+            "speech_start": 0.0,
+            "speech_end": 0.0,
             "detected_language": trans_res.get("language", "auto")
         }
 
     original_text = trans_res["text"]
 
-    # Step 3: Fast contextual translation with Gemini 3.5 Flash
+    # Step 3: Fast contextual translation with Gemini 3.5 Flash Lite
     translated_text = LiveTranslationService.translate_live_text(
         text=original_text,
         source_lang=source_language,
@@ -668,6 +676,8 @@ async def live_translate_chunk(
         "is_speech": True,
         "original_text": original_text,
         "translated_text": translated_text or original_text,
+        "speech_start": trans_res.get("speech_start", 0.0),
+        "speech_end": trans_res.get("speech_end", 0.0),
         "detected_language": trans_res.get("language", "auto")
     }
 

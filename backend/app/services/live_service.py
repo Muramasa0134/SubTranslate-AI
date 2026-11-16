@@ -85,52 +85,80 @@ class LiveTranslationService:
     def transcribe_chunk(
         cls,
         audio_np: np.ndarray,
-        source_language: Optional[str] = "auto"
+        source_language: Optional[str] = "auto",
+        whisper_model: Optional[str] = None,
+        prev_context: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Transcribes an in-memory 16kHz float32 audio slice using faster-whisper.
-        Returns text, detected language, and confidence.
+        Returns text, detected language, confidence, speech_start and speech_end.
         """
-        if len(audio_np) < 8000:  # Less than 0.5 seconds
-            return {"text": "", "language": "en", "is_speech": False}
+        if len(audio_np) < 6400:  # Less than 0.4 seconds
+            return {"text": "", "language": "en", "is_speech": False, "speech_start": 0.0, "speech_end": 0.0}
 
         # Check energy / RMS to quickly discard true absolute silence
         rms = float(np.sqrt(np.mean(audio_np ** 2)))
-        if rms < 0.0006:  # True silence threshold (lowered from 0.005 so quiet parallel app speech is preserved)
-            return {"text": "", "language": "en", "is_speech": False}
+        if rms < 0.0006:  # True silence threshold
+            return {"text": "", "language": "en", "is_speech": False, "speech_start": 0.0, "speech_end": 0.0}
 
-        # Normalize audio volume so Whisper receives clean, loud speech even from low-volume apps
+        # Normalize audio volume so Whisper receives clean, audible speech even from low-volume apps
         max_val = float(np.max(np.abs(audio_np)))
         if max_val > 0.001:
             audio_np = (audio_np / max_val) * 0.95
 
-        model = WhisperService.get_model()
+        model = WhisperService.get_model(whisper_model)
 
         lang = None
         if source_language and source_language.lower() != "auto":
             lang = source_language.lower()
 
+        # Context prompt for Whisper to avoid homophone mishears & keep terminology consistent
+        initial_prompt = None
+        if prev_context and prev_context.strip():
+            initial_prompt = prev_context.strip()[:180]
+
         segments, info = model.transcribe(
             audio_np,
             language=lang,
+            initial_prompt=initial_prompt,
             beam_size=1,
             temperature=0.0,
             vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=250)
+            vad_parameters=dict(
+                min_silence_duration_ms=180,
+                threshold=0.3
+            ),
+            condition_on_previous_text=False
         )
 
         texts = []
-        for s in segments:
-            t = s.text.strip()
-            if t:
-                texts.append(t)
+        speech_start = 0.0
+        speech_end = round(len(audio_np) / 16000.0, 2)
+
+        segs_list = list(segments)
+        if segs_list:
+            speech_start = round(segs_list[0].start, 2)
+            speech_end = round(segs_list[-1].end, 2)
+            for s in segs_list:
+                t = s.text.strip()
+                # Clean up common Whisper noise hallucinations like [Music] or (Applause)
+                if t and not (t.startswith("[") and t.endswith("]")) and not (t.startswith("(") and t.endswith(")")):
+                    texts.append(t)
 
         full_text = " ".join(texts).strip()
+
+        # Prevent repetitive word loops
+        words = full_text.split()
+        if len(words) > 6 and len(set(words)) <= 2:
+            full_text = words[0]
+
         return {
             "text": full_text,
             "language": info.language if info else (lang or "auto"),
             "language_prob": info.language_probability if info else 1.0,
-            "is_speech": bool(full_text)
+            "is_speech": bool(full_text),
+            "speech_start": speech_start,
+            "speech_end": speech_end
         }
 
     @classmethod
@@ -144,8 +172,8 @@ class LiveTranslationService:
         api_key: Optional[str] = None
     ) -> str:
         """
-        Translates live detected speech in ultra-low latency (<0.8s) using Gemini 3.5 Flash
-        with thinking_budget=0 and conversational context.
+        Translates live detected speech in ultra-low latency (<0.8s) using Gemini 3.5 Flash Lite
+        with natural conversational nuance and concise subtitle formatting.
         """
         if not text or not text.strip():
             return ""
@@ -156,16 +184,20 @@ class LiveTranslationService:
 
         context_prompt = ""
         if prev_context and prev_context.strip():
-            context_prompt = f"Previous spoken context: \"{prev_context.strip()}\"\n"
+            context_prompt = f"Recent spoken context: \"{prev_context.strip()}\"\n"
 
-        prompt = f"""You are a professional live subtitle translator for streaming video.
-Translate the following live spoken line into natural, expressive, concise {target_lang}.
-Style: {style} (natural spoken flow, proper pronouns, punchy subtitle length).
+        prompt = f"""You are an elite live video subtitle translator.
+Translate the following live spoken line into concise, natural, expressive {target_lang}.
+
+Style Guidelines ({style}):
+- Spoken Flow: Natural Vietnamese phrasing with context-appropriate pronouns (ta/ngươi/tôi/cậu/anh/em/hắn).
+- Subtitle Precision: Match the exact speaker tone and meaning. Keep length punchy and readable at a glance.
+- Clean Output: Output ONLY the translated sentence. No explanations, no quotes, no labels.
+
 {context_prompt}
 Spoken line to translate:
 "{text.strip()}"
-
-Return ONLY the direct translated sentence in plain text. No quotes, no explanations, no JSON."""
+"""
 
         models_to_try = [settings.GEMINI_MODEL or "gemini-3.5-flash-lite", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
         for m in models_to_try:
