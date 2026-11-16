@@ -30,11 +30,13 @@ export default function LiveSubtitleWidget({
   targetLang = 'vi',
   translationStyle = 'cinematic',
   apiKey = '',
-  externalVideoStream = null
+  externalVideoStream = null,
+  videoElementRef = null,
+  localVideoLoaded = false
 }) {
   // Capture states
   const [isListening, setIsListening] = useState(false);
-  const [captureSource, setCaptureSource] = useState('display'); // 'display' (screen/tab), 'mic', 'video'
+  const [captureSource, setCaptureSource] = useState(localVideoLoaded ? 'video' : 'display'); // 'video', 'display', 'mic'
   const [currentOriginal, setCurrentOriginal] = useState('');
   const [currentTranslated, setCurrentTranslated] = useState('Đang chờ phát hiện âm thanh từ video...');
   const [detectedLang, setDetectedLang] = useState('');
@@ -122,11 +124,45 @@ export default function LiveSubtitleWidget({
   const startListening = async (overrideSource) => {
     const activeSource = overrideSource || captureSource;
     try {
-      let stream = null;
+      let rawStream = null;
+      let audioTracks = [];
 
-      if (activeSource === 'display') {
+      if (activeSource === 'video') {
+        // Capture audio directly from in-app HTML5 video element
+        const vid = videoElementRef?.current;
+        if (!vid) {
+          alert('Vui lòng mở một video trong trình phát trước khi chọn nguồn này.');
+          return;
+        }
+
+        try {
+          if (typeof vid.captureStream === 'function') {
+            rawStream = vid.captureStream();
+          } else if (typeof vid.mozCaptureStream === 'function') {
+            rawStream = vid.mozCaptureStream();
+          }
+          if (rawStream) {
+            audioTracks = rawStream.getAudioTracks();
+          }
+        } catch (e) {
+          console.warn('captureStream on video element failed:', e);
+        }
+
+        // If video element captureStream had no audio track, fallback to display capture
+        if (audioTracks.length === 0) {
+          rawStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            }
+          });
+          audioTracks = rawStream.getAudioTracks();
+        }
+      } else if (activeSource === 'display') {
         // Capture tab / screen audio (e.g. YouTube, Netflix, Coursera tab)
-        stream = await navigator.mediaDevices.getDisplayMedia({
+        rawStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: {
             echoCancellation: false,
@@ -134,58 +170,84 @@ export default function LiveSubtitleWidget({
             autoGainControl: false,
           }
         });
+        audioTracks = rawStream.getAudioTracks();
 
         // Check if user selected audio
-        if (stream.getAudioTracks().length === 0) {
-          alert('Lưu ý: Bạn chưa chọn ô "Chia sẻ âm thanh hệ thống / tab" (Share audio) trong cửa sổ trình duyệt. Vui lòng thử lại và tích chọn chia sẻ âm thanh.');
-          stream.getTracks().forEach(t => t.stop());
+        if (audioTracks.length === 0) {
+          alert('Lưu ý: Bạn chưa chọn ô "Chia sẻ âm thanh hệ thống / tab" (Share audio) trong cửa sổ trình duyệt. Vui lòng thử lại và nhớ tích chọn chia sẻ âm thanh.');
+          rawStream.getTracks().forEach(t => t.stop());
           return;
         }
       } else if (activeSource === 'mic') {
         // Capture microphone / speaker loopback
-        stream = await navigator.mediaDevices.getUserMedia({
+        rawStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
           }
         });
+        audioTracks = rawStream.getAudioTracks();
       }
 
-      if (!stream) return;
-      mediaStreamRef.current = stream;
+      if (!rawStream || audioTracks.length === 0) {
+        alert('Không tìm thấy luồng âm thanh để thu. Vui lòng kiểm tra lại thiết bị hoặc nguồn phát.');
+        return;
+      }
+
+      mediaStreamRef.current = rawStream;
 
       // Handle stream stop by user from browser bar
-      stream.getVideoTracks().forEach(track => {
+      rawStream.getVideoTracks().forEach(track => {
         track.onended = () => stopListening();
       });
-      stream.getAudioTracks().forEach(track => {
+      audioTracks.forEach(track => {
         track.onended = () => stopListening();
       });
 
-      startAudioVisualizer(stream);
+      // CRITICAL FIX: MediaRecorder MUST only receive audio tracks when using audio mime types!
+      // Passing a stream with video tracks causes "Failed to execute 'start' on 'MediaRecorder'".
+      const audioOnlyStream = new MediaStream(audioTracks);
 
-      // Create MediaRecorder with chunking every 3.2 seconds
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
+      startAudioVisualizer(audioOnlyStream);
 
-      const recorder = new MediaRecorder(stream, { mimeType });
+      // Determine best supported audio MIME type
+      let recorderOptions = {};
+      const supportedTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4'
+      ];
+      for (const mime of supportedTypes) {
+        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) {
+          recorderOptions = { mimeType: mime };
+          break;
+        }
+      }
+
+      let recorder;
+      try {
+        recorder = new MediaRecorder(audioOnlyStream, recorderOptions);
+      } catch (err) {
+        console.warn('MediaRecorder with mimeType options failed, creating default:', err);
+        recorder = new MediaRecorder(audioOnlyStream);
+      }
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = async (e) => {
-        if (e.data && e.data.size > 1000) {
+        if (e.data && e.data.size > 200) {
           handleAudioChunk(e.data);
         }
       };
 
-      // Slice audio in 3.2s chunks
-      recorder.start(3200);
+      // Slice audio in 3.0s chunks
+      recorder.start(3000);
       setIsListening(true);
-      setCurrentTranslated('Đang lắng nghe âm thanh từ video...');
+      setCurrentTranslated('Đang lắng nghe và phát hiện âm thanh từ video...');
     } catch (err) {
       console.error('Error starting live capture:', err);
       if (err.name !== 'NotAllowedError') {
-        alert('Không thể bắt đầu thu âm: ' + err.message);
+        alert('Không thể bắt đầu thu âm: ' + (err.message || err.name));
       }
       stopListening();
     }
@@ -373,6 +435,21 @@ export default function LiveSubtitleWidget({
         {/* Source selector & Start button */}
         <div className="flex items-center flex-wrap gap-2.5">
           <div className="flex items-center bg-dark-950 p-1 rounded-xl border border-dark-800">
+            {localVideoLoaded && (
+              <button
+                onClick={() => { setCaptureSource('video'); if (isListening) startListening('video'); }}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  captureSource === 'video'
+                    ? 'bg-accent-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Thu âm trực tiếp từ Video đang phát trong trình phát này"
+              >
+                <Video className="w-3.5 h-3.5" />
+                <span>Video Player</span>
+              </button>
+            )}
+
             <button
               onClick={() => { setCaptureSource('display'); if (isListening) startListening('display'); }}
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${

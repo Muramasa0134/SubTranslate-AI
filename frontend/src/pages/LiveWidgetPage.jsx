@@ -170,6 +170,8 @@ export default function LiveWidgetPage({ config, onOpenKeyModal }) {
             targetLang={targetLang}
             translationStyle={translationStyle}
             apiKey={config?.gemini_api_key}
+            videoElementRef={videoRef}
+            localVideoLoaded={Boolean(localVideoUrl)}
           />
         </div>
 
