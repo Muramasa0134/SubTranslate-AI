@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Radio, 
   Monitor, 
@@ -13,7 +13,19 @@ import {
   ExternalLink,
   ShieldAlert,
   Key,
-  Info
+  Info,
+  Clock,
+  Download,
+  Trash2,
+  Copy,
+  Check,
+  Search,
+  ArrowDownCircle,
+  Globe,
+  Tv,
+  Users,
+  Compass,
+  FileText
 } from 'lucide-react';
 import LiveSubtitleWidget from '../components/LiveSubtitleWidget';
 import { SOURCE_LANGUAGES, TARGET_LANGUAGES } from '../utils/languages';
@@ -29,6 +41,26 @@ export default function LiveWidgetPage({ config, onOpenKeyModal }) {
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // Live dialogue & transcript state
+  const [liveHistory, setLiveHistory] = useState([]);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeechActive, setIsSpeechActive] = useState(false);
+  const [currentSpeakingEntry, setCurrentSpeakingEntry] = useState(null);
+
+  // Side Tab state
+  const [activeSideTab, setActiveSideTab] = useState('subtitles'); // 'subtitles', 'platforms'
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [copiedId, setCopiedId] = useState(null);
+  const transcriptBottomRef = useRef(null);
+
+  // Auto-scroll to bottom when new subtitle appears
+  useEffect(() => {
+    if (autoScroll && transcriptBottomRef.current) {
+      transcriptBottomRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [liveHistory, autoScroll]);
+
   // Handle local video drop/selection
   const handleVideoSelect = (e) => {
     const file = e.target.files?.[0];
@@ -43,6 +75,81 @@ export default function LiveWidgetPage({ config, onOpenKeyModal }) {
     setLocalVideoName(file.name);
   };
 
+  const copyToClipboard = (text, id) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const jumpToVideoTime = (startSec) => {
+    if (videoRef.current && typeof startSec === 'number') {
+      videoRef.current.currentTime = startSec;
+      videoRef.current.play();
+    }
+  };
+
+  const exportAsSrt = () => {
+    if (liveHistory.length === 0) {
+      alert('Chưa có câu thoại nào để xuất file.');
+      return;
+    }
+
+    let srtText = '';
+    const reversed = [...liveHistory].reverse();
+    reversed.forEach((item, index) => {
+      const idx = index + 1;
+      const start = item.startSrt || '00:00:00,000';
+      const end = item.endSrt || '00:00:03,000';
+      srtText += `${idx}\n${start} --> ${end}\n${item.translated}\n\n`;
+    });
+
+    const blob = new Blob([srtText], { type: 'application/x-subrip' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `live_subtitles_${new Date().toISOString().slice(0, 10)}.srt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportAsTxt = () => {
+    if (liveHistory.length === 0) {
+      alert('Chưa có câu thoại nào để xuất file.');
+      return;
+    }
+
+    let txtContent = `SUBTRANSLATE AI - LIVE TRANSCRIPT\nNgày xuất: ${new Date().toLocaleString()}\n`;
+    txtContent += `Ngôn ngữ đích: ${targetLang.toUpperCase()} | Phong cách: ${translationStyle}\n`;
+    txtContent += '='.repeat(50) + '\n\n';
+
+    const reversed = [...liveHistory].reverse();
+    reversed.forEach((item) => {
+      txtContent += `[${item.timestamp || item.time}] ${item.original ? `(${item.original}) ` : ''}==> ${item.translated}\n`;
+    });
+
+    const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `live_transcript_${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const filteredHistory = liveHistory.filter(item => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      item.translated?.toLowerCase().includes(q) ||
+      item.original?.toLowerCase().includes(q) ||
+      item.timestamp?.includes(q)
+    );
+  });
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6 animate-fadeIn">
       {/* Page Header */}
@@ -56,11 +163,11 @@ export default function LiveWidgetPage({ config, onOpenKeyModal }) {
               <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
                 Live Subtitle Widget
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse">
-                  Trực tiếp
+                  {isListening ? 'Đang chạy' : 'Sẵn sàng'}
                 </span>
               </h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Phát hiện và dịch trực tiếp âm thanh từ video thành phụ đề chèn ngay bên dưới mà không cần tải về
+                Phát hiện và hiển thị phụ đề theo thời gian thực bên cạnh video trên <b>mọi nền tảng</b> (Web, App Desktop, Zoom, VLC, Video file)
               </p>
             </div>
           </div>
@@ -101,10 +208,10 @@ export default function LiveWidgetPage({ config, onOpenKeyModal }) {
         </div>
       </div>
 
-      {/* Main Workspace Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Live Video Screen / Player Area (8 Cols) */}
-        <div className="lg:col-span-8 space-y-4">
+      {/* Main Dual-Pane Workspace */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* LEFT COLUMN: Video Player / Stream Screen + Bottom Subtitle Bar (7 Cols) */}
+        <div className="lg:col-span-7 space-y-4">
           <div className="rounded-3xl bg-dark-900 border border-dark-800 overflow-hidden shadow-2xl relative group">
             {localVideoUrl ? (
               <div className="relative aspect-video bg-black flex items-center justify-center">
@@ -122,10 +229,10 @@ export default function LiveWidgetPage({ config, onOpenKeyModal }) {
                   <Monitor className="w-12 h-12 text-accent-400" />
                 </div>
                 <h3 className="text-base font-bold text-white mb-1.5">
-                  Chọn Nguồn Video để Bắt đầu Dịch Trực Tiếp
+                  Chọn Nguồn Âm thanh Video để Bắt đầu
                 </h3>
                 <p className="text-xs text-slate-400 max-w-md leading-relaxed mb-6">
-                  Bạn có thể phát hiện âm thanh trực tiếp từ bất kỳ <b>Tab trình duyệt (YouTube, Netflix)</b>, hoặc mở một video từ máy tính để xem kèm phụ đề AI.
+                  Hoạt động trên <b>mọi nền tảng</b>: YouTube, Netflix, Zoom, VLC, Teams, Bilibili, TikTok hoặc mở bất kỳ video nào từ máy tính.
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-3">
@@ -164,7 +271,7 @@ export default function LiveWidgetPage({ config, onOpenKeyModal }) {
             )}
           </div>
 
-          {/* THE LIVE SUBTITLE WIDGET ATTACHED DIRECTLY UNDERNEATH */}
+          {/* THE LIVE SUBTITLE WIDGET BAR (ATTACHED UNDERNEATH VIDEO) */}
           <LiveSubtitleWidget
             sourceLang={sourceLang}
             targetLang={targetLang}
@@ -172,92 +279,294 @@ export default function LiveWidgetPage({ config, onOpenKeyModal }) {
             apiKey={config?.gemini_api_key}
             videoElementRef={videoRef}
             localVideoLoaded={Boolean(localVideoUrl)}
+            externalHistory={liveHistory}
+            setExternalHistory={setLiveHistory}
+            onSpeechStatusChange={(active, entry) => {
+              setIsSpeechActive(active);
+              if (active && entry) {
+                setCurrentSpeakingEntry(entry);
+              }
+            }}
+            onListeningChange={(listening) => setIsListening(listening)}
           />
         </div>
 
-        {/* Right Column: Instructions & Capabilities Guide (4 Cols) */}
-        <div className="lg:col-span-4 space-y-4">
-          {/* Quick Guide Card */}
-          <div className="p-5 rounded-3xl bg-dark-900/90 border border-dark-800 shadow-xl space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center space-x-2">
-              <Sparkles className="w-4 h-4 text-emerald-400" />
-              <span>Cách sử dụng Widget Dịch Trực Tiếp</span>
-            </h3>
+        {/* RIGHT COLUMN: THE DEDICATED LIVE SUBTITLE SIDE PANEL TAB (5 Cols) */}
+        <div className="lg:col-span-5 space-y-4">
+          <div className="rounded-3xl bg-dark-900/95 border border-dark-800 shadow-2xl flex flex-col h-[650px] overflow-hidden">
+            {/* Side Panel Tabs Header */}
+            <div className="p-3 border-b border-dark-800 bg-dark-950/80 flex items-center justify-between gap-2">
+              <div className="flex items-center space-x-1.5 bg-dark-900 p-1 rounded-2xl border border-dark-800">
+                <button
+                  onClick={() => setActiveSideTab('subtitles')}
+                  className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    activeSideTab === 'subtitles'
+                      ? 'bg-accent-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Phụ đề Trực tiếp</span>
+                  {liveHistory.length > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/20 font-mono">
+                      {liveHistory.length}
+                    </span>
+                  )}
+                </button>
 
-            <div className="space-y-3 text-xs text-slate-300">
-              <div className="p-3 rounded-2xl bg-dark-950 border border-dark-800/80 space-y-1">
-                <span className="font-bold text-emerald-400 flex items-center gap-1.5">
-                  1. Dịch Video trên Web (YouTube, Netflix)
-                </span>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Bấm <b>"Tab / Màn hình"</b> ➔ bấm <b>"Bật Dịch Trực Tiếp"</b> ➔ Chọn tab chứa video và <b>tích chọn "Chia sẻ âm thanh"</b>. Phụ đề sẽ tự động xuất hiện theo thời gian thực!
-                </p>
+                <button
+                  onClick={() => setActiveSideTab('platforms')}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    activeSideTab === 'platforms'
+                      ? 'bg-accent-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>Mọi nền tảng</span>
+                </button>
               </div>
 
-              <div className="p-3 rounded-2xl bg-dark-950 border border-dark-800/80 space-y-1">
-                <span className="font-bold text-purple-400 flex items-center gap-1.5">
-                  2. Cửa sổ Nổi Luôn Trên Cùng (PiP)
+              {/* Status Indicator */}
+              <div className="flex items-center space-x-2 pr-1">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isListening
+                      ? isSpeechActive ? 'bg-emerald-400 animate-ping' : 'bg-red-500 animate-pulse'
+                      : 'bg-slate-600'
+                  }`}
+                />
+                <span className="text-[10px] font-mono font-bold uppercase text-slate-400">
+                  {isListening ? (isSpeechActive ? 'Đang nói' : 'Đang nghe') : 'Tạm dừng'}
                 </span>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Bấm nút <b>"Cửa sổ nổi PiP"</b> để tách thanh phụ đề thành một cửa sổ nhỏ luôn nổi trên mọi ứng dụng khác (kể cả khi bạn mở video toàn màn hình).
-                </p>
-              </div>
-
-              <div className="p-3 rounded-2xl bg-dark-950 border border-dark-800/80 space-y-1">
-                <span className="font-bold text-cyan-400 flex items-center gap-1.5">
-                  3. Xem kèm Video từ Máy tính
-                </span>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Bấm <b>"Mở Video từ máy tính"</b> để phát video trực tiếp trong trình phát. Thanh phụ đề sẽ chèn ngay bên dưới khung hình video.
-                </p>
               </div>
             </div>
-          </div>
 
-          {/* AI Tech Specs Card */}
-          <div className="p-5 rounded-3xl bg-dark-900/90 border border-dark-800 shadow-xl space-y-3">
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-2">
-              <Info className="w-3.5 h-3.5 text-accent-400" />
-              <span>Công nghệ Xử lý Trực tiếp</span>
-            </h4>
-            <ul className="space-y-2 text-[11px] text-slate-400">
-              <li className="flex items-center justify-between py-1 border-b border-dark-800">
-                <span>Nhận diện giọng nói</span>
-                <span className="font-mono text-emerald-400 font-bold">Whisper Tiny (In-Memory)</span>
-              </li>
-              <li className="flex items-center justify-between py-1 border-b border-dark-800">
-                <span>Dịch ngữ cảnh trực tiếp</span>
-                <span className="font-mono text-cyan-400 font-bold">Gemini 3.5 Flash (0s thinking)</span>
-              </li>
-              <li className="flex items-center justify-between py-1 border-b border-dark-800">
-                <span>Độ trễ trung bình</span>
-                <span className="font-mono text-amber-400 font-bold">&lt; 0.8 giây / câu</span>
-              </li>
-              <li className="flex items-center justify-between py-1">
-                <span>Lưu trữ ổ cứng</span>
-                <span className="font-mono text-slate-300">0 MB (Không tốn bộ nhớ)</span>
-              </li>
-            </ul>
-          </div>
+            {/* TAB CONTENT 1: REAL-TIME SUBTITLE TRANSCRIPT FEED */}
+            {activeSideTab === 'subtitles' && (
+              <div className="flex-1 flex flex-col min-h-0">
+                {/* Search & Actions Bar */}
+                <div className="p-3 border-b border-dark-800 bg-dark-950/40 flex items-center justify-between gap-2 text-xs">
+                  <div className="relative flex-1">
+                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Tìm kiếm câu thoại..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 bg-dark-900 border border-dark-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-accent-500"
+                    />
+                  </div>
 
-          {/* API Key Status Notice */}
-          {!config?.has_gemini_api_key && (
-            <div className="p-4 rounded-3xl bg-amber-950/30 border border-amber-500/40 text-amber-300 text-xs space-y-2">
-              <div className="flex items-center space-x-2 font-semibold">
-                <Key className="w-4 h-4" />
-                <span>Cần nhập Gemini API Key</span>
+                  {/* Auto-scroll Switch */}
+                  <button
+                    onClick={() => setAutoScroll(!autoScroll)}
+                    className={`px-2.5 py-1.5 rounded-xl border flex items-center space-x-1 font-semibold text-[11px] transition-all ${
+                      autoScroll
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                        : 'bg-dark-900 text-slate-400 border-dark-800'
+                    }`}
+                    title="Tự động cuộn xuống khi nhân vật nói câu mới"
+                  >
+                    <ArrowDownCircle className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Tự cuộn</span>
+                  </button>
+
+                  {/* Export SRT */}
+                  <button
+                    onClick={exportAsSrt}
+                    disabled={liveHistory.length === 0}
+                    className="p-1.5 rounded-xl bg-dark-900 border border-dark-800 text-slate-300 hover:text-white disabled:opacity-30"
+                    title="Xuất file phụ đề .SRT có timestamp"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+
+                  {/* Clear */}
+                  <button
+                    onClick={() => setLiveHistory([])}
+                    disabled={liveHistory.length === 0}
+                    className="p-1.5 rounded-xl bg-dark-900 border border-dark-800 text-slate-500 hover:text-rose-400 disabled:opacity-30"
+                    title="Xóa danh sách thoại"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* The Dialogue Feed List */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-2.5 custom-scrollbar">
+                  {filteredHistory.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center p-6 text-center text-slate-500 space-y-3">
+                      <div className="p-3.5 rounded-2xl bg-dark-950 border border-dark-800">
+                        <Radio className="w-8 h-8 text-slate-600 animate-pulse" />
+                      </div>
+                      <p className="text-xs max-w-xs leading-relaxed">
+                        Chưa có câu thoại nào. Bấm <b>"Bật Dịch Trực Tiếp"</b> và phát video bất kỳ, phụ đề và thời gian nói sẽ tự động hiện lên tại đây theo từng câu!
+                      </p>
+                    </div>
+                  ) : (
+                    filteredHistory.map((item) => {
+                      const isCurrent = currentSpeakingEntry?.id === item.id && isSpeechActive;
+                      return (
+                        <div
+                          key={item.id}
+                          className={`p-3 rounded-2xl border transition-all duration-200 relative group ${
+                            isCurrent
+                              ? 'bg-dark-950 border-amber-500/60 shadow-lg shadow-amber-500/10 ring-1 ring-amber-500/40'
+                              : 'bg-dark-950/70 border-dark-800/80 hover:border-dark-700'
+                          }`}
+                        >
+                          {/* Top Meta Line: Timestamp & Badges */}
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center space-x-2">
+                              {/* Timestamp Pill */}
+                              <button
+                                onClick={() => item.startSec && jumpToVideoTime(item.startSec)}
+                                className="flex items-center space-x-1 px-2 py-0.5 rounded-lg bg-dark-900 border border-dark-800 text-[10px] font-mono text-cyan-400 font-bold hover:border-cyan-500/50 transition-colors"
+                                title="Bấm để tua video tới mốc thời gian này"
+                              >
+                                <Clock className="w-3 h-3 text-cyan-400" />
+                                <span>{item.timestamp || '00:00'}</span>
+                              </button>
+
+                              <span className="text-[10px] text-slate-500 font-mono">
+                                {item.time}
+                              </span>
+
+                              {item.lang && (
+                                <span className="text-[9px] uppercase px-1.5 py-0.2 rounded bg-dark-900 text-slate-400 border border-dark-800">
+                                  {item.lang}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Active speech indicator or copy button */}
+                            <div className="flex items-center space-x-1.5">
+                              {isCurrent && (
+                                <span className="flex items-center space-x-1 text-[10px] text-amber-400 font-bold px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 animate-pulse">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                  <span>Đang nói...</span>
+                                </span>
+                              )}
+
+                              <button
+                                onClick={() => copyToClipboard(item.translated, item.id)}
+                                className="p-1 rounded-lg text-slate-500 hover:text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Sao chép câu dịch"
+                              >
+                                {copiedId === item.id ? (
+                                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Original spoken line (Bilingual) */}
+                          {item.original && (
+                            <p className="text-slate-400 text-xs italic mb-1 leading-relaxed">
+                              "{item.original}"
+                            </p>
+                          )}
+
+                          {/* Vietnamese Translated Subtitle */}
+                          <p className="text-white font-bold text-xs sm:text-sm text-amber-200/95 leading-relaxed tracking-wide">
+                            {item.translated}
+                          </p>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={transcriptBottomRef} />
+                </div>
+
+                {/* Footer Quick Actions */}
+                <div className="p-3 border-t border-dark-800 bg-dark-950 flex items-center justify-between text-xs text-slate-400">
+                  <div className="flex items-center space-x-1 text-[11px]">
+                    <span>Tổng số câu:</span>
+                    <span className="font-mono font-bold text-white">{liveHistory.length}</span>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={exportAsTxt}
+                      disabled={liveHistory.length === 0}
+                      className="text-[11px] text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+                    >
+                      Xuất .TXT
+                    </button>
+                    <span className="text-dark-700">|</span>
+                    <button
+                      onClick={exportAsSrt}
+                      disabled={liveHistory.length === 0}
+                      className="text-[11px] text-accent-400 hover:text-accent-300 font-bold disabled:opacity-30 transition-colors"
+                    >
+                      Xuất .SRT
+                    </button>
+                  </div>
+                </div>
               </div>
-              <p className="text-[11px] text-amber-200/80 leading-relaxed">
-                Để dịch trực tiếp sang tiếng Việt chất lượng cao, bạn cần cấu hình Gemini API Key.
-              </p>
-              <button
-                onClick={onOpenKeyModal}
-                className="w-full py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs border border-amber-500/30 transition-colors"
-              >
-                Nhập API Key
-              </button>
-            </div>
-          )}
+            )}
+
+            {/* TAB CONTENT 2: UNIVERSAL PLATFORMS GUIDE */}
+            {activeSideTab === 'platforms' && (
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar text-xs text-slate-300">
+                <div className="p-3.5 rounded-2xl bg-gradient-to-br from-dark-950 to-dark-900 border border-dark-800 space-y-1">
+                  <h4 className="font-bold text-emerald-400 flex items-center gap-1.5 text-xs">
+                    <Globe className="w-4 h-4" />
+                    <span>Hỗ Trợ Mọi Nền Tảng Video & Ứng Dụng</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Hệ thống thu và xử lý âm thanh qua luồng chuẩn Web Audio & Display Media, cho phép dịch trực tiếp trên bất kỳ trang web hay phần mềm máy tính nào:
+                  </p>
+                </div>
+
+                {/* Platform Categories */}
+                <div className="space-y-2.5">
+                  <div className="p-3 rounded-2xl bg-dark-950 border border-dark-800/80 space-y-1.5">
+                    <div className="flex items-center space-x-2 text-rose-400 font-bold">
+                      <Tv className="w-4 h-4" />
+                      <span>1. Web Video (YouTube, Netflix, Bilibili, TikTok, Twitch)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Chọn <b>"Tab / Màn hình"</b> ➔ Chọn tab video ➔ <b>Tích chọn ô "Chia sẻ âm thanh"</b> (Share audio). Phụ đề sẽ lập tức nhảy vào bảng bên cạnh theo từng câu nói!
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-dark-950 border border-dark-800/80 space-y-1.5">
+                    <div className="flex items-center space-x-2 text-purple-400 font-bold">
+                      <Users className="w-4 h-4" />
+                      <span>2. Họp Trực Tuyến (Zoom, Teams, Google Meet, Discord)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Chọn <b>"Toàn bộ màn hình"</b> + <b>"Chia sẻ âm thanh hệ thống"</b> khi họp bằng app Zoom/Teams. Giọng người tham gia nói đến đâu, tab phụ đề dịch sang tiếng Việt đến đó.
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-dark-950 border border-dark-800/80 space-y-1.5">
+                    <div className="flex items-center space-x-2 text-cyan-400 font-bold">
+                      <Video className="w-4 h-4" />
+                      <span>3. Xem Phim trên Desktop (VLC, PotPlayer, Windows Media)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Bật phim trên VLC/PotPlayer, chọn <b>"Toàn bộ màn hình"</b> có chia sẻ âm thanh, sau đó bấm <b>"Cửa sổ nổi PiP"</b> để đặt bảng phụ đề nhỏ ngay bên dưới phim!
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-dark-950 border border-dark-800/80 space-y-1.5">
+                    <div className="flex items-center space-x-2 text-amber-400 font-bold">
+                      <Upload className="w-4 h-4" />
+                      <span>4. Mở File Video trực tiếp (.MP4, .MKV, .WebM, .AVI)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Bấm <b>"Mở Video từ máy tính"</b> để phát ngay trong trình duyệt. Bảng bên cạnh sẽ hiển thị thời gian phát và cho phép bấm vào câu thoại để tua video đến đúng đoạn nói!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

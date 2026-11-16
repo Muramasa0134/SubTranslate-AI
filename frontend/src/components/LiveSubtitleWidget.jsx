@@ -25,6 +25,15 @@ import {
 } from 'lucide-react';
 import { liveTranslateChunk } from '../services/api';
 
+function formatSecondsToSrtTime(totalSec) {
+  const safeSec = Math.max(0, totalSec || 0);
+  const hrs = String(Math.floor(safeSec / 3600)).padStart(2, '0');
+  const mins = String(Math.floor((safeSec % 3600) / 60)).padStart(2, '0');
+  const secs = String(Math.floor(safeSec % 60)).padStart(2, '0');
+  const ms = '000';
+  return `${hrs}:${mins}:${secs},${ms}`;
+}
+
 export default function LiveSubtitleWidget({
   sourceLang = 'auto',
   targetLang = 'vi',
@@ -32,7 +41,11 @@ export default function LiveSubtitleWidget({
   apiKey = '',
   externalVideoStream = null,
   videoElementRef = null,
-  localVideoLoaded = false
+  localVideoLoaded = false,
+  externalHistory = null,
+  setExternalHistory = null,
+  onSpeechStatusChange = null,
+  onListeningChange = null
 }) {
   // Capture states
   const [isListening, setIsListening] = useState(false);
@@ -53,8 +66,10 @@ export default function LiveSubtitleWidget({
   const [showSettings, setShowSettings] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState(null);
 
-  // History of spoken lines
-  const [liveHistory, setLiveHistory] = useState([]);
+  // History of spoken lines (supports parent state lifting)
+  const [internalHistory, setInternalHistory] = useState([]);
+  const liveHistory = externalHistory !== null ? externalHistory : internalHistory;
+  const setLiveHistory = setExternalHistory !== null ? setExternalHistory : setInternalHistory;
 
   // Media & Audio Context references
   const mediaStreamRef = useRef(null);
@@ -65,6 +80,7 @@ export default function LiveSubtitleWidget({
   const prevContextRef = useRef('');
   const isProcessingChunkRef = useRef(false);
   const pipWindowRef = useRef(null);
+  const sessionStartTimeRef = useRef(null);
 
   // Clean up on unmount
   useEffect(() => {
@@ -242,7 +258,9 @@ export default function LiveSubtitleWidget({
 
       // Slice audio in 3.0s chunks
       recorder.start(3000);
+      sessionStartTimeRef.current = Date.now();
       setIsListening(true);
+      if (onListeningChange) onListeningChange(true);
       setCurrentTranslated('Đang lắng nghe và phát hiện âm thanh từ video...');
     } catch (err) {
       console.error('Error starting live capture:', err);
@@ -275,17 +293,57 @@ export default function LiveSubtitleWidget({
         setDetectedLang(result.detected_language);
         prevContextRef.current = result.original_text;
 
+        const now = Date.now();
+        const startSec = sessionStartTimeRef.current
+          ? Math.max(0, Math.floor((now - sessionStartTimeRef.current - 3000) / 1000))
+          : 0;
+        const endSec = sessionStartTimeRef.current
+          ? Math.floor((now - sessionStartTimeRef.current) / 1000)
+          : startSec + 3;
+
+        let timestampDisplay = '';
+        let startSrt = '';
+        let endSrt = '';
+
+        if (videoElementRef?.current && !isNaN(videoElementRef.current.currentTime)) {
+          const vidCurrent = videoElementRef.current.currentTime;
+          const vStart = Math.max(0, vidCurrent - 3);
+          const vEnd = vidCurrent;
+          const min = String(Math.floor(vStart / 60)).padStart(2, '0');
+          const sec = String(Math.floor(vStart % 60)).padStart(2, '0');
+          timestampDisplay = `${min}:${sec}`;
+          startSrt = formatSecondsToSrtTime(vStart);
+          endSrt = formatSecondsToSrtTime(vEnd);
+        } else {
+          const min = String(Math.floor(startSec / 60)).padStart(2, '0');
+          const sec = String(Math.floor(startSec % 60)).padStart(2, '0');
+          timestampDisplay = `${min}:${sec}`;
+          startSrt = formatSecondsToSrtTime(startSec);
+          endSrt = formatSecondsToSrtTime(endSec);
+        }
+
         // Push to live history
         const newEntry = {
-          id: Date.now(),
+          id: now,
           time: new Date().toLocaleTimeString(),
+          timestamp: timestampDisplay,
+          startSec,
+          endSec,
+          startSrt,
+          endSrt,
           original: result.original_text,
           translated: result.translated_text || result.original_text,
           lang: result.detected_language
         };
-        setLiveHistory(prev => [newEntry, ...prev.slice(0, 99)]); // Keep last 100 lines
+        setLiveHistory(prev => [newEntry, ...prev.slice(0, 199)]);
+        if (onSpeechStatusChange) {
+          onSpeechStatusChange(true, newEntry);
+        }
       } else {
         setIsSpeechActive(false);
+        if (onSpeechStatusChange) {
+          onSpeechStatusChange(false, null);
+        }
       }
     } catch (err) {
       console.warn('Chunk translation error:', err);
@@ -309,6 +367,8 @@ export default function LiveSubtitleWidget({
     stopAudioVisualizer();
     setIsListening(false);
     setIsSpeechActive(false);
+    if (onListeningChange) onListeningChange(false);
+    if (onSpeechStatusChange) onSpeechStatusChange(false, null);
     setCurrentTranslated('Đã tạm dừng dịch trực tiếp.');
   };
 
@@ -408,7 +468,9 @@ export default function LiveSubtitleWidget({
     const reversed = [...liveHistory].reverse();
     reversed.forEach((item, index) => {
       const idx = index + 1;
-      srtText += `${idx}\n00:00:00,000 --> 00:00:03,000\n${item.translated}\n\n`;
+      const start = item.startSrt || '00:00:00,000';
+      const end = item.endSrt || '00:00:03,000';
+      srtText += `${idx}\n${start} --> ${end}\n${item.translated}\n\n`;
     });
 
     const blob = new Blob([srtText], { type: 'application/x-subrip' });
