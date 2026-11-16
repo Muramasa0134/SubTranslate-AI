@@ -136,7 +136,7 @@ Spoken line to translate:
 
 Return ONLY the direct translated sentence in plain text. No quotes, no explanations, no JSON."""
 
-        models_to_try = [settings.GEMINI_MODEL or "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+        models_to_try = [settings.GEMINI_MODEL or "gemini-3.5-flash-lite", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
         for m in models_to_try:
             try:
                 res = client.models.generate_content(
