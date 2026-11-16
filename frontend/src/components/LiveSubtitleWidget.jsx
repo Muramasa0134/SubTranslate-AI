@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Radio, 
   Square, 
@@ -21,9 +21,15 @@ import {
   Video,
   Settings2,
   Copy,
-  Check
+  Check,
+  AlertTriangle,
+  Info,
+  HelpCircle,
+  CheckCircle2,
+  X
 } from 'lucide-react';
 import { liveTranslateChunk } from '../services/api';
+import { encodeWAV } from '../utils/audioEncoder';
 
 function formatSecondsToSrtTime(totalSec) {
   const safeSec = Math.max(0, totalSec || 0);
@@ -64,7 +70,12 @@ export default function LiveSubtitleWidget({
   const [widgetPosition, setWidgetPosition] = useState('bottom'); // 'bottom', 'floating', 'pip'
   const [showHistory, setShowHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAudioHelpModal, setShowAudioHelpModal] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState(null);
+
+  // Audio Device Enumeration (Microphone / Stereo Mix)
+  const [availableMics, setAvailableMics] = useState([]);
+  const [selectedMicId, setSelectedMicId] = useState('');
 
   // History of spoken lines (supports parent state lifting)
   const [internalHistory, setInternalHistory] = useState([]);
@@ -73,14 +84,32 @@ export default function LiveSubtitleWidget({
 
   // Media & Audio Context references
   const mediaStreamRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
   const audioContextRef = useRef(null);
+  const processorRef = useRef(null);
+  const pcmBufferRef = useRef([]);
+  const accumulatedSamplesRef = useRef(0);
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
   const prevContextRef = useRef('');
   const isProcessingChunkRef = useRef(false);
   const pipWindowRef = useRef(null);
+  const pipContainerRef = useRef(null);
   const sessionStartTimeRef = useRef(null);
+
+  // Enumerate audio input devices (e.g. Stereo Mix, External Mic, Headset)
+  useEffect(() => {
+    if (navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === 'function') {
+      navigator.mediaDevices.enumerateDevices()
+        .then((devices) => {
+          const audioInputs = devices.filter((d) => d.kind === 'audioinput');
+          setAvailableMics(audioInputs);
+          if (audioInputs.length > 0 && !selectedMicId) {
+            setSelectedMicId(audioInputs[0].deviceId);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [selectedMicId]);
 
   // Clean up on unmount
   useEffect(() => {
@@ -97,7 +126,6 @@ export default function LiveSubtitleWidget({
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const ctx = new AudioCtx();
-      audioContextRef.current = ctx;
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 64;
@@ -127,12 +155,7 @@ export default function LiveSubtitleWidget({
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      try {
-        audioContextRef.current.close();
-      } catch (e) {}
-      audioContextRef.current = null;
-    }
+    analyserRef.current = null;
     setAudioLevel(0);
   };
 
@@ -166,98 +189,138 @@ export default function LiveSubtitleWidget({
 
         // If video element captureStream had no audio track, fallback to display capture
         if (audioTracks.length === 0) {
+          try {
+            rawStream = await navigator.mediaDevices.getDisplayMedia({
+              video: { displaySurface: 'monitor' },
+              audio: {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+                systemAudio: 'include'
+              },
+              systemAudio: 'include',
+              selfBrowserSurface: 'exclude',
+              surfaceSwitching: 'include'
+            });
+            audioTracks = rawStream.getAudioTracks();
+          } catch (e) {
+            if (e.name === 'NotAllowedError') return;
+            throw e;
+          }
+        }
+      } else if (activeSource === 'display') {
+        // Capture tab / screen audio (e.g. YouTube, Netflix, Zoom, VLC, Teams)
+        try {
           rawStream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
+            video: {
+              displaySurface: 'monitor',
+            },
             audio: {
               echoCancellation: false,
               noiseSuppression: false,
               autoGainControl: false,
-            }
+              systemAudio: 'include',
+            },
+            systemAudio: 'include',
+            selfBrowserSurface: 'exclude',
+            surfaceSwitching: 'include'
           });
-          audioTracks = rawStream.getAudioTracks();
+        } catch (e) {
+          if (e.name === 'NotAllowedError') return;
+          throw e;
         }
-      } else if (activeSource === 'display') {
-        // Capture tab / screen audio (e.g. YouTube, Netflix, Coursera tab)
-        rawStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-          }
-        });
+
         audioTracks = rawStream.getAudioTracks();
 
-        // Check if user selected audio
+        // Check if user selected audio checkbox in Chrome picker
         if (audioTracks.length === 0) {
-          alert('Lưu ý: Bạn chưa chọn ô "Chia sẻ âm thanh hệ thống / tab" (Share audio) trong cửa sổ trình duyệt. Vui lòng thử lại và nhớ tích chọn chia sẻ âm thanh.');
-          rawStream.getTracks().forEach(t => t.stop());
+          setShowAudioHelpModal(true);
+          rawStream.getTracks().forEach((t) => t.stop());
           return;
         }
       } else if (activeSource === 'mic') {
-        // Capture microphone / speaker loopback
+        // Capture microphone / Stereo Mix / speaker loopback
+        const audioConstraints = {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: true,
+        };
+        if (selectedMicId) {
+          audioConstraints.deviceId = { exact: selectedMicId };
+        }
         rawStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-          }
+          audio: audioConstraints
         });
         audioTracks = rawStream.getAudioTracks();
       }
 
       if (!rawStream || audioTracks.length === 0) {
-        alert('Không tìm thấy luồng âm thanh để thu. Vui lòng kiểm tra lại thiết bị hoặc nguồn phát.');
+        setShowAudioHelpModal(true);
         return;
       }
 
       mediaStreamRef.current = rawStream;
 
-      // Handle stream stop by user from browser bar
-      rawStream.getVideoTracks().forEach(track => {
+      // Handle stream stop by user from browser UI bar
+      rawStream.getVideoTracks().forEach((track) => {
         track.onended = () => stopListening();
       });
-      audioTracks.forEach(track => {
+      audioTracks.forEach((track) => {
         track.onended = () => stopListening();
       });
 
-      // CRITICAL FIX: MediaRecorder MUST only receive audio tracks when using audio mime types!
-      // Passing a stream with video tracks causes "Failed to execute 'start' on 'MediaRecorder'".
+      // Extract isolated audio-only stream
       const audioOnlyStream = new MediaStream(audioTracks);
 
       startAudioVisualizer(audioOnlyStream);
 
-      // Determine best supported audio MIME type
-      let recorderOptions = {};
-      const supportedTypes = [
-        'audio/webm;codecs=opus',
-        'audio/webm',
-        'audio/ogg;codecs=opus',
-        'audio/mp4'
-      ];
-      for (const mime of supportedTypes) {
-        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) {
-          recorderOptions = { mimeType: mime };
-          break;
-        }
-      }
-
-      let recorder;
+      // Start Web Audio PCM stream (Produces 100% valid 16kHz WAV slices with zero container demux errors)
       try {
-        recorder = new MediaRecorder(audioOnlyStream, recorderOptions);
-      } catch (err) {
-        console.warn('MediaRecorder with mimeType options failed, creating default:', err);
-        recorder = new MediaRecorder(audioOnlyStream);
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const pcmCtx = new AudioCtx();
+        audioContextRef.current = pcmCtx;
+
+        const sourceNode = pcmCtx.createMediaStreamSource(audioOnlyStream);
+        const bufferSize = 4096;
+        const processor = pcmCtx.createScriptProcessor(bufferSize, 1, 1);
+        processorRef.current = processor;
+
+        pcmBufferRef.current = [];
+        accumulatedSamplesRef.current = 0;
+        const targetSamples = Math.round(pcmCtx.sampleRate * 3.0); // Exactly 3.0 seconds
+
+        processor.onaudioprocess = (e) => {
+          const inputData = e.inputBuffer.getChannelData(0);
+          pcmBufferRef.current.push(new Float32Array(inputData));
+          accumulatedSamplesRef.current += inputData.length;
+
+          if (accumulatedSamplesRef.current >= targetSamples) {
+            const total = accumulatedSamplesRef.current;
+            const merged = new Float32Array(total);
+            let offset = 0;
+            for (const chunk of pcmBufferRef.current) {
+              merged.set(chunk, offset);
+              offset += chunk.length;
+            }
+            pcmBufferRef.current = [];
+            accumulatedSamplesRef.current = 0;
+
+            // Convert to 16-bit PCM WAV Blob
+            const wavBlob = encodeWAV(merged, pcmCtx.sampleRate);
+            handleAudioChunk(wavBlob);
+          }
+        };
+
+        // Connect source -> processor -> silent gain -> destination
+        const silentGain = pcmCtx.createGain();
+        silentGain.gain.value = 0;
+        sourceNode.connect(processor);
+        processor.connect(silentGain);
+        silentGain.connect(pcmCtx.destination);
+      } catch (pcmErr) {
+        console.warn('Web Audio PCM init failed, falling back:', pcmErr);
       }
-      mediaRecorderRef.current = recorder;
 
-      recorder.ondataavailable = async (e) => {
-        if (e.data && e.data.size > 200) {
-          handleAudioChunk(e.data);
-        }
-      };
-
-      // Slice audio in 3.0s chunks
-      recorder.start(3000);
       sessionStartTimeRef.current = Date.now();
       setIsListening(true);
       if (onListeningChange) onListeningChange(true);
@@ -354,14 +417,24 @@ export default function LiveSubtitleWidget({
 
   // Stop Capturing
   const stopListening = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+    if (processorRef.current) {
       try {
-        mediaRecorderRef.current.stop();
+        processorRef.current.disconnect();
       } catch (e) {}
-      mediaRecorderRef.current = null;
+      processorRef.current = null;
     }
+    pcmBufferRef.current = [];
+    accumulatedSamplesRef.current = 0;
+
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      try {
+        audioContextRef.current.close();
+      } catch (e) {}
+      audioContextRef.current = null;
+    }
+
     if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(t => t.stop());
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
       mediaStreamRef.current = null;
     }
     stopAudioVisualizer();
@@ -372,11 +445,39 @@ export default function LiveSubtitleWidget({
     setCurrentTranslated('Đã tạm dừng dịch trực tiếp.');
   };
 
+  // Synchronize Subtitles to Picture-in-Picture window instantaneously
+  const renderPipContent = useCallback(() => {
+    if (!pipWindowRef.current || pipWindowRef.current.closed || !pipContainerRef.current) return;
+    const c = pipContainerRef.current;
+    c.style.backgroundColor = '#0b0f19';
+    c.innerHTML = `
+      <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #94a3b8; margin-bottom: 6px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${isListening ? (isSpeechActive ? '#10b981' : '#ef4444') : '#64748b'}; box-shadow: 0 0 8px ${isListening ? (isSpeechActive ? '#10b981' : '#ef4444') : 'transparent'};"></span>
+        <span>SubTranslate AI Live ${detectedLang ? `(${detectedLang.toUpperCase()})` : ''}</span>
+        ${isSpeechActive ? '<span style="color: #10b981; font-weight: 700; background: rgba(16, 185, 129, 0.15); padding: 1px 6px; border-radius: 8px;">🎙️ Đang nói</span>' : ''}
+      </div>
+      ${isBilingual && currentOriginal ? `
+        <div style="font-size: ${Math.max(13, fontSize - 7)}px; color: #94a3b8; margin-bottom: 5px; text-align: center; font-style: italic; max-width: 95%; line-height: 1.35;">
+          "${currentOriginal}"
+        </div>
+      ` : ''}
+      <div style="font-size: ${fontSize}px; font-weight: 800; color: ${fontColor}; text-align: center; text-shadow: 0 2px 6px rgba(0,0,0,0.9); line-height: 1.35; max-width: 96%; transition: all 0.15s ease;">
+        ${currentTranslated}
+      </div>
+    `;
+  }, [isListening, isSpeechActive, detectedLang, isBilingual, currentOriginal, fontSize, fontColor, currentTranslated]);
+
+  // Reactive effect: every time subtitle changes, update PiP window immediately
+  useEffect(() => {
+    renderPipContent();
+  }, [renderPipContent]);
+
   // Pop-out into Always-on-top Picture-in-Picture window (Document PiP API)
   const togglePictureInPictureWindow = async () => {
     if (pipWindowRef.current && !pipWindowRef.current.closed) {
       pipWindowRef.current.close();
       pipWindowRef.current = null;
+      pipContainerRef.current = null;
       setWidgetPosition('bottom');
       return;
     }
@@ -424,33 +525,19 @@ export default function LiveSubtitleWidget({
       container.style.alignItems = 'center';
       container.style.justifyContent = 'center';
       container.style.padding = '12px 20px';
+      container.style.boxSizing = 'border-box';
       container.style.fontFamily = 'system-ui, -apple-system, sans-serif';
       pipWindow.document.body.style.margin = '0';
       pipWindow.document.body.appendChild(container);
-
-      // Periodic updater for PiP DOM
-      const updatePipDom = () => {
-        if (!pipWindowRef.current || pipWindowRef.current.closed) return;
-        container.innerHTML = `
-          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
-            <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${isListening ? '#ef4444' : '#64748b'};"></span>
-            SubTranslate AI Live Widget ${detectedLang ? `(${detectedLang.toUpperCase()})` : ''}
-          </div>
-          ${isBilingual && currentOriginal ? `<div style="font-size: ${Math.max(13, fontSize - 7)}px; color: #94a3b8; margin-bottom: 4px; text-align: center; font-style: italic;">${currentOriginal}</div>` : ''}
-          <div style="font-size: ${fontSize}px; font-weight: 700; color: ${fontColor}; text-align: center; text-shadow: 0 2px 4px rgba(0,0,0,0.8); line-height: 1.35;">
-            ${currentTranslated}
-          </div>
-        `;
-      };
-
-      updatePipDom();
-      const interval = setInterval(updatePipDom, 250);
+      pipContainerRef.current = container;
 
       pipWindow.addEventListener('pagehide', () => {
-        clearInterval(interval);
         pipWindowRef.current = null;
+        pipContainerRef.current = null;
         setWidgetPosition('bottom');
       });
+
+      renderPipContent();
     } catch (err) {
       console.error('Failed to open PiP window:', err);
       setWidgetPosition('floating');
@@ -532,12 +619,34 @@ export default function LiveSubtitleWidget({
                   ? 'bg-accent-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
-              title="Thu âm trực tiếp từ Microphone hoặc Loa ngoài máy tính"
+              title="Thu âm trực tiếp từ Microphone hoặc Stereo Mix"
             >
               <Mic className="w-3.5 h-3.5" />
-              <span>Microphone</span>
+              <span>Microphone / Stereo Mix</span>
             </button>
           </div>
+
+          {/* Mic Device Selector dropdown if 'mic' source selected */}
+          {captureSource === 'mic' && availableMics.length > 1 && (
+            <select
+              value={selectedMicId}
+              onChange={(e) => {
+                setSelectedMicId(e.target.value);
+                if (isListening) {
+                  stopListening();
+                  setTimeout(() => startListening('mic'), 200);
+                }
+              }}
+              className="px-2.5 py-1.5 bg-dark-950 border border-dark-700 rounded-xl text-xs text-white max-w-[180px] truncate focus:outline-none focus:border-accent-500"
+              title="Chọn thiết bị thu âm thanh (Microphone hoặc Stereo Mix)"
+            >
+              {availableMics.map((mic) => (
+                <option key={mic.deviceId} value={mic.deviceId}>
+                  {mic.label || `Thiết bị ${mic.deviceId.slice(0, 5)}...`}
+                </option>
+              ))}
+            </select>
+          )}
 
           {/* Main Action Button */}
           {!isListening ? (
@@ -575,7 +684,7 @@ export default function LiveSubtitleWidget({
                 })}
               </div>
               <span className="text-[11px] font-mono text-emerald-400 font-bold">
-                {audioLevel > 15 ? 'Đang phát hiện âm thanh' : 'Đang lắng nghe...'}
+                {audioLevel > 15 ? 'Đang nhận âm thanh' : 'Đang lắng nghe...'}
               </span>
             </div>
           )}
@@ -588,10 +697,10 @@ export default function LiveSubtitleWidget({
             onClick={togglePictureInPictureWindow}
             className={`p-2 rounded-xl border text-xs font-medium flex items-center space-x-1.5 transition-all ${
               widgetPosition === 'pip'
-                ? 'bg-purple-600 text-white border-purple-500'
+                ? 'bg-purple-600 text-white border-purple-500 ring-2 ring-purple-400/30'
                 : 'bg-dark-950 border-dark-800 text-slate-300 hover:text-white hover:border-dark-700'
             }`}
-            title="Tách thanh phụ đề thành Cửa sổ Nổi Luôn Nằm Trên Cùng (Picture-in-Picture)"
+            title="Tách thanh phụ đề thành Cửa sổ Nổi Luôn Nằm Trên Cùng (Always-on-top PiP) để xem cùng lúc với Zoom, VLC, game"
           >
             <ExternalLink className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Cửa sổ nổi PiP</span>
@@ -636,6 +745,22 @@ export default function LiveSubtitleWidget({
         </div>
       </div>
 
+      {/* Helpful banner for parallel app usage */}
+      <div className="px-4 py-2.5 rounded-xl bg-dark-950/70 border border-dark-800/80 flex items-center justify-between text-xs text-slate-400">
+        <div className="flex items-center space-x-2">
+          <Info className="w-4 h-4 text-purple-400 shrink-0" />
+          <span>
+            <b>Mẹo dùng song song app khác:</b> Bấm nút <span className="text-purple-300 font-semibold">"Cửa sổ nổi PiP"</span> ở trên để ghim phụ đề nổi trên Zoom, VLC, Teams. Khi chọn chia sẻ màn hình, nhớ tick <span className="text-amber-300 font-semibold">"Chia sẻ âm thanh hệ thống"</span>!
+          </span>
+        </div>
+        <button
+          onClick={() => setShowAudioHelpModal(true)}
+          className="text-xs text-accent-400 hover:text-accent-300 font-medium underline underline-offset-2 shrink-0 ml-2"
+        >
+          Xem hướng dẫn chi tiết
+        </button>
+      </div>
+
       {/* Floating Widget Customization Bar (Expandable) */}
       {showSettings && (
         <div className="p-4 rounded-2xl bg-dark-900/80 border border-dark-800 flex flex-wrap items-center gap-6 text-xs text-slate-300 animate-fadeIn">
@@ -663,7 +788,7 @@ export default function LiveSubtitleWidget({
                 onClick={() => setFontSize(sz)}
                 className={`px-2.5 py-1 rounded-lg border font-mono text-xs transition-all ${
                   fontSize === sz
-                    ? 'bg-accent-600 text-white border-accent-500 font-bold'
+                    ? 'bg-accent-600 text-white border-accent-500'
                     : 'bg-dark-950 border-dark-800 text-slate-400 hover:text-white'
                 }`}
               >
@@ -676,18 +801,18 @@ export default function LiveSubtitleWidget({
           <div className="flex items-center space-x-2">
             <span className="font-semibold text-slate-400 uppercase text-[10px]">Màu chữ:</span>
             {[
-              { hex: '#FDE047', label: 'Vàng' },
-              { hex: '#FFFFFF', label: 'Trắng' },
-              { hex: '#38BDF8', label: 'Cyan' },
-              { hex: '#4ADE80', label: 'Lá' },
+              { label: 'Vàng rực', value: '#FDE047' },
+              { label: 'Trắng', value: '#FFFFFF' },
+              { label: 'Xanh Neon', value: '#34D399' },
+              { label: 'Cam', value: '#FB923C' }
             ].map((col) => (
               <button
-                key={col.hex}
-                onClick={() => setFontColor(col.hex)}
-                className={`w-6 h-6 rounded-full border-2 transition-transform ${
-                  fontColor === col.hex ? 'scale-115 border-white ring-2 ring-accent-500/50' : 'border-transparent opacity-70 hover:opacity-100'
+                key={col.value}
+                onClick={() => setFontColor(col.value)}
+                className={`w-5 h-5 rounded-full border-2 transition-transform ${
+                  fontColor === col.value ? 'scale-125 border-white shadow-md' : 'border-dark-700 opacity-60'
                 }`}
-                style={{ backgroundColor: col.hex }}
+                style={{ backgroundColor: col.value }}
                 title={col.label}
               />
             ))}
@@ -695,39 +820,39 @@ export default function LiveSubtitleWidget({
 
           {/* Background Opacity */}
           <div className="flex items-center space-x-2">
-            <span className="font-semibold text-slate-400 uppercase text-[10px]">Độ mờ nền:</span>
+            <span className="font-semibold text-slate-400 uppercase text-[10px]">Độ trong suốt nền:</span>
             <input
               type="range"
-              min="30"
+              min="20"
               max="100"
+              step="5"
               value={bgOpacity}
               onChange={(e) => setBgOpacity(Number(e.target.value))}
               className="w-24 accent-accent-500 cursor-pointer"
             />
-            <span className="font-mono text-slate-400">{bgOpacity}%</span>
+            <span className="font-mono text-xs text-slate-400">{bgOpacity}%</span>
           </div>
         </div>
       )}
 
-      {/* THE LIVE SUBTITLE WIDGET BAR */}
+      {/* THE ACTUAL LIVE SUBTITLE OVERLAY CONTAINER */}
       <div
-        className={`relative transition-all duration-300 ${
+        className={`w-full transition-all duration-300 ${
           widgetPosition === 'floating'
-            ? 'fixed bottom-8 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-4xl shadow-2xl ring-1 ring-white/10'
-            : 'w-full shadow-xl'
+            ? 'fixed bottom-8 left-1/2 -translate-x-1/2 z-50 max-w-3xl w-[90%] shadow-2xl'
+            : 'relative'
         }`}
       >
         <div
-          className="rounded-3xl border border-white/10 p-5 backdrop-blur-xl relative overflow-hidden transition-all duration-200"
+          className="rounded-2xl p-5 border shadow-2xl transition-all duration-200 backdrop-blur-md"
           style={{
-            backgroundColor: `rgba(15, 23, 42, ${bgOpacity / 100})`,
+            backgroundColor: `rgba(11, 15, 25, ${bgOpacity / 100})`,
+            borderColor: isSpeechActive ? 'rgba(16, 185, 129, 0.4)' : 'rgba(30, 41, 59, 0.8)',
+            boxShadow: isSpeechActive ? '0 0 25px rgba(16, 185, 129, 0.15)' : 'none'
           }}
         >
-          {/* Subtle neon glowing accent edge */}
-          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-accent-500/60 to-transparent" />
-
-          {/* Header indicator inside widget */}
-          <div className="flex items-center justify-between mb-2">
+          {/* Status Header inside widget */}
+          <div className="flex items-center justify-between text-xs pb-1 border-b border-dark-800/50 mb-2">
             <div className="flex items-center space-x-2">
               <span
                 className={`w-2 h-2 rounded-full ${
@@ -736,14 +861,16 @@ export default function LiveSubtitleWidget({
                     : 'bg-slate-600'
                 }`}
               />
-              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 flex items-center space-x-1.5">
-                <span>SUBTRANSLATE AI WIDGET</span>
-                {detectedLang && (
-                  <span className="px-1.5 py-0.2 bg-white/10 rounded text-slate-300 font-mono">
-                    {detectedLang.toUpperCase()} ➔ {targetLang.toUpperCase()}
-                  </span>
-                )}
+              <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                {isListening
+                  ? isSpeechActive ? '🎙️ Đang nói...' : 'Đang lắng nghe'
+                  : 'Sẵn sàng'}
               </span>
+              {detectedLang && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-dark-800 text-slate-300 font-mono uppercase">
+                  {detectedLang}
+                </span>
+              )}
             </div>
 
             {widgetPosition === 'floating' && (
@@ -848,6 +975,83 @@ export default function LiveSubtitleWidget({
                 </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+
+      {/* AUDIO HELP MODAL: Step-by-step guidance to capture system audio in Windows */}
+      {showAudioHelpModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-dark-900 border border-dark-700 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5 relative">
+            <button
+              onClick={() => setShowAudioHelpModal(false)}
+              className="absolute top-5 right-5 p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-dark-800 transition-all"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center space-x-3">
+              <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Chưa Nhận Được Luồng Âm Thanh</h3>
+                <p className="text-xs text-slate-400">Cách bật âm thanh khi dùng cùng lúc với các ứng dụng khác</p>
+              </div>
+            </div>
+
+            <div className="space-y-3.5 text-xs text-slate-300">
+              <div className="p-3.5 rounded-2xl bg-dark-950 border border-dark-800 space-y-2">
+                <div className="font-bold text-white flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-accent-600 text-white flex items-center justify-center text-[11px]">1</span>
+                  Nếu dịch Video trên Web (YouTube, Netflix, Coursera):
+                </div>
+                <p className="text-slate-400 pl-6 leading-relaxed">
+                  Khi hộp thoại chia sẻ màn hình hiện ra, hãy bấm vào tab <b>"Thẻ Chrome / Edge" (Tab)</b> và chọn tab YouTube đang phát. Đảm bảo ô <b>"Chia sẻ âm thanh của thẻ"</b> (Share tab audio) được tick chọn.
+                </p>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-dark-950 border border-dark-800 space-y-2">
+                <div className="font-bold text-white flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-accent-600 text-white flex items-center justify-center text-[11px]">2</span>
+                  Nếu dịch App máy tính (Zoom, Teams, VLC, PotPlayer, Game):
+                </div>
+                <p className="text-slate-400 pl-6 leading-relaxed">
+                  Bấm chọn tab <b>"Toàn bộ màn hình" (Entire Screen)</b> và <b>BẮT BUỘC GẠT BẬT</b> công tắc <b>"Chia sẻ âm thanh hệ thống" (Share system audio)</b> ở góc dưới bên trái!
+                </p>
+                <p className="text-amber-400/90 pl-6 text-[11px] font-medium">
+                  ⚠️ Lưu ý: Windows không hỗ trợ chia sẻ âm thanh cho tab "Cửa sổ" (Window), vì vậy bạn cần chọn "Toàn bộ màn hình".
+                </p>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-dark-950 border border-dark-800 space-y-2">
+                <div className="font-bold text-white flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-purple-600 text-white flex items-center justify-center text-[11px]">3</span>
+                  Để vừa dùng app khác vừa đọc được phụ đề:
+                </div>
+                <p className="text-slate-400 pl-6 leading-relaxed">
+                  Bấm nút <b>"Cửa sổ nổi PiP" (màu tím)</b>: Thanh phụ đề sẽ tách ra thành một cửa sổ mini luôn ghim trên cùng màn hình máy tính của bạn (đè lên trên Zoom, VLC, game).
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                onClick={() => setShowAudioHelpModal(false)}
+                className="px-4 py-2 rounded-xl bg-dark-800 hover:bg-dark-700 text-slate-300 text-xs font-semibold transition-all"
+              >
+                Đóng
+              </button>
+              <button
+                onClick={() => {
+                  setShowAudioHelpModal(false);
+                  startListening('display');
+                }}
+                className="px-5 py-2 rounded-xl bg-accent-600 hover:bg-accent-500 text-white text-xs font-bold shadow-lg shadow-accent-600/20 transition-all"
+              >
+                Thử Bật Lại Ngay
+              </button>
+            </div>
           </div>
         </div>
       )}

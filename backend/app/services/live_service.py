@@ -1,6 +1,7 @@
 import io
 import av
 import logging
+import subprocess
 import numpy as np
 from typing import Optional, Dict, Any, List
 from google import genai
@@ -8,6 +9,7 @@ from google.genai import types
 
 from app.utils.config import settings
 from app.services.whisper_service import WhisperService
+from app.services.audio_service import get_ffmpeg_binary
 
 logger = logging.getLogger(__name__)
 
@@ -24,36 +26,60 @@ class LiveTranslationService:
             cls._client = genai.Client(api_key=key)
             cls._client_key = key
         return cls._client
+
     @staticmethod
     def decode_audio_bytes(audio_bytes: bytes) -> np.ndarray:
         """
-        Decodes any incoming audio format (WebM, WAV, MP3, OGG, AAC) in memory
+        Decodes any incoming audio format (WAV, WebM, MP3, OGG, AAC) in memory
         directly into a 16kHz mono float32 numpy array for Whisper inference.
         Zero disk I/O for maximum real-time throughput.
         """
         if not audio_bytes or len(audio_bytes) < 100:
             return np.zeros(0, dtype=np.float32)
 
+        # 1. First attempt: Ultra-fast PyAV memory demuxing
         try:
             container = av.open(io.BytesIO(audio_bytes))
-            if not container.streams.audio:
-                return np.zeros(0, dtype=np.float32)
+            if container.streams.audio:
+                resampler = av.AudioResampler(format='fltp', layout='mono', rate=16000)
+                frames = []
 
-            resampler = av.AudioResampler(format='fltp', layout='mono', rate=16000)
-            frames = []
+                for frame in container.decode(audio=0):
+                    for resampled in resampler.resample(frame):
+                        frames.append(resampled.to_ndarray())
 
-            for frame in container.decode(audio=0):
-                for resampled in resampler.resample(frame):
-                    frames.append(resampled.to_ndarray())
-
-            if not frames:
-                return np.zeros(0, dtype=np.float32)
-
-            audio_np = np.concatenate(frames, axis=1).flatten()
-            return audio_np
+                if frames:
+                    audio_np = np.concatenate(frames, axis=1).flatten()
+                    if len(audio_np) > 0:
+                        return audio_np
         except Exception as e:
-            logger.warning(f"PyAV memory decode failed: {e}. Trying fallback...")
-            return np.zeros(0, dtype=np.float32)
+            logger.debug(f"PyAV memory decode failed: {e}. Trying FFmpeg pipe fallback...")
+
+        # 2. Second attempt: Robust FFmpeg subprocess pipe fallback (handles raw chunks & WebM fragments)
+        try:
+            ffmpeg = get_ffmpeg_binary()
+            proc = subprocess.Popen(
+                [
+                    ffmpeg, "-y",
+                    "-loglevel", "error",
+                    "-i", "pipe:0",
+                    "-f", "f32le",
+                    "-acodec", "pcm_f32le",
+                    "-ac", "1",
+                    "-ar", "16000",
+                    "pipe:1"
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            out, _ = proc.communicate(input=audio_bytes, timeout=4)
+            if out and len(out) >= 4:
+                return np.frombuffer(out, dtype=np.float32)
+        except Exception as fb_err:
+            logger.warning(f"FFmpeg pipe fallback failed: {fb_err}")
+
+        return np.zeros(0, dtype=np.float32)
 
     @classmethod
     def transcribe_chunk(
@@ -68,10 +94,15 @@ class LiveTranslationService:
         if len(audio_np) < 8000:  # Less than 0.5 seconds
             return {"text": "", "language": "en", "is_speech": False}
 
-        # Check energy / RMS to quickly discard silence before invoking model
-        rms = np.sqrt(np.mean(audio_np ** 2))
-        if rms < 0.005:  # Silence threshold
+        # Check energy / RMS to quickly discard true absolute silence
+        rms = float(np.sqrt(np.mean(audio_np ** 2)))
+        if rms < 0.0006:  # True silence threshold (lowered from 0.005 so quiet parallel app speech is preserved)
             return {"text": "", "language": "en", "is_speech": False}
+
+        # Normalize audio volume so Whisper receives clean, loud speech even from low-volume apps
+        max_val = float(np.max(np.abs(audio_np)))
+        if max_val > 0.001:
+            audio_np = (audio_np / max_val) * 0.95
 
         model = WhisperService.get_model()
 
@@ -85,7 +116,7 @@ class LiveTranslationService:
             beam_size=1,
             temperature=0.0,
             vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=300)
+            vad_parameters=dict(min_silence_duration_ms=250)
         )
 
         texts = []
