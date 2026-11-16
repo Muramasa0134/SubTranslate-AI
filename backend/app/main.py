@@ -19,6 +19,15 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database schema
     logger.info("Initializing SQLite database tables...")
     init_db()
+
+    # Pre-warm Whisper Model in background so live chunk inference is instant
+    try:
+        from app.services.whisper_service import WhisperService
+        WhisperService.get_model()
+        logger.info("Whisper model pre-warmed into memory successfully.")
+    except Exception as e:
+        logger.warning(f"Whisper pre-warm failed: {e}")
+
     logger.info(f"SubTranslate AI backend started. Storage dir: {settings.STORAGE_DIR}")
     yield
     logger.info("Shutting down SubTranslate AI backend...")
