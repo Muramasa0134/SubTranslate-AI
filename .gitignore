@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+backend/.venv/
+.venv/
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+node_modules/
+.npm
+*.log
+
+# Environment & Keys
+.env
+backend/.env
+.env.local
+.env.*.local
+
+# Storage (keep folders, ignore generated contents)
+backend/storage/uploads/*
+backend/storage/audio/*
+backend/storage/subtitles/*
+backend/storage/*.db
+backend/storage/*.db-journal
+!backend/storage/.gitkeep
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
