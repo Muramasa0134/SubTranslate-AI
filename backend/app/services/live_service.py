@@ -197,23 +197,11 @@ Quy tắc: Đại từ xưng hô tự nhiên, không giải thích hay mở ngo�
                 res = client.models.generate_content(
                     model=m,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.2,
-                        thinking_config=types.ThinkingConfig(thinking_budget=0)
-                    )
+                    config=types.GenerateContentConfig(temperature=0.2)
                 )
                 if res and res.text:
                     return res.text.strip().strip('"')
-            except Exception as e:
-                try:
-                    res = client.models.generate_content(
-                        model=m,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(temperature=0.2)
-                    )
-                    if res and res.text:
-                        return res.text.strip().strip('"')
-                except Exception:
-                    continue
+            except Exception:
+                continue
 
         return text

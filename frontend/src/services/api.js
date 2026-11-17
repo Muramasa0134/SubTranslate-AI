@@ -50,6 +50,52 @@ export const translateSrtItems = async ({
 };
 
 // Video Operations
+export const getVideoUrlInfo = async (url) => {
+  const response = await api.post('/video/info', { url });
+  return response.data;
+};
+
+export const translateVideoUrl = async ({
+  url,
+  source_language,
+  target_language,
+  translation_style,
+  context_hint,
+  whisper_model,
+  api_key,
+  model_name,
+  font_size,
+  font_color,
+  outline_color,
+  border_style,
+  position,
+  preset = 'ultrafast',
+}) => {
+  const response = await api.post(
+    '/video/translate-url',
+    {
+      url,
+      source_language,
+      target_language,
+      translation_style,
+      context_hint,
+      whisper_model,
+      api_key,
+      model_name,
+      font_size,
+      font_color,
+      outline_color,
+      border_style,
+      position,
+      preset,
+    },
+    {
+      timeout: 900000, // 15 mins for downloading + transcribing + translating
+    }
+  );
+  return response.data;
+};
+
 export const translateVideoFile = async ({
   file,
   source_language,

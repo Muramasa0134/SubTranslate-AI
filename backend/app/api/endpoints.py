@@ -21,7 +21,10 @@ from app.models.schemas import (
     ConfigStatusResponse,
     SetApiKeyRequest,
     Mp4ExportConfig,
-    ExportMp4Request
+    ExportMp4Request,
+    VideoUrlInfoRequest,
+    VideoUrlInfoResponse,
+    TranslateVideoUrlRequest
 )
 from app.utils.config import settings
 from app.services.srt_service import SRTService
@@ -31,6 +34,7 @@ from app.services.whisper_service import WhisperService
 from app.services.video_service import VideoService
 from app.services.history_service import HistoryService
 from app.services.live_service import LiveTranslationService
+from app.services.download_service import DownloadService
 
 logger = logging.getLogger(__name__)
 
@@ -189,8 +193,173 @@ async def translate_srt(request: TranslateSrtRequest, db: Session = Depends(get_
 
 
 # -------------------------------------------------------------
-# Video Direct Translation Endpoints
+# Video Direct Translation Endpoints (URL & Upload)
 # -------------------------------------------------------------
+
+@router.post("/video/info", response_model=VideoUrlInfoResponse)
+def get_video_url_info(payload: VideoUrlInfoRequest):
+    """
+    Extracts metadata (title, duration, thumbnail, uploader) from a video URL
+    (YouTube, TikTok, Facebook, MP4 URL, etc.) without downloading.
+    """
+    if not payload.url or not payload.url.strip():
+        raise HTTPException(status_code=400, detail="Vui lòng cung cấp URL video.")
+    try:
+        info = DownloadService.get_video_info(payload.url)
+        return VideoUrlInfoResponse(**info)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/video/translate-url", response_model=TranslationResultResponse)
+async def translate_video_from_url(
+    payload: TranslateVideoUrlRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Downloads video from URL (YouTube, TikTok, Facebook, MP4 URL, etc.),
+    transcribes audio with Whisper AI, translates with Gemini AI, and hardsubs subtitles.
+    """
+    url = payload.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL video không được để trống.")
+
+    if not AudioService.is_ffmpeg_available():
+        raise HTTPException(
+            status_code=500,
+            detail="FFmpeg is not available on the server. Audio extraction cannot proceed."
+        )
+
+    resolved_api_key = payload.api_key or settings.GEMINI_API_KEY
+    if not resolved_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Gemini API Key is missing. Please provide it in settings or request."
+        )
+
+    job_id = str(uuid.uuid4())
+    video_filename = f"{job_id}.mp4"
+    video_save_path = settings.UPLOADS_DIR / video_filename
+    audio_wav_path = settings.AUDIO_DIR / f"{job_id}.wav"
+
+    # Step 1: Download video from URL
+    try:
+        download_info = DownloadService.download_video(url, video_save_path)
+        video_title = download_info.get("title") or "Video từ Link"
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không thể tải video từ link: {str(e)}")
+
+    video_relative_url = f"/storage/uploads/{video_filename}"
+
+    # Create initial history entry
+    HistoryService.create_record(
+        db=db,
+        job_id=job_id,
+        file_name=video_title,
+        file_type="video",
+        source_language=payload.source_language,
+        target_language=payload.target_language,
+        status="processing",
+        video_path=video_relative_url
+    )
+
+    try:
+        # Step 2: Extract audio with FFmpeg (16kHz mono WAV)
+        AudioService.extract_audio(video_save_path, audio_wav_path)
+
+        # Step 3: Transcribe audio with faster-whisper
+        whisper_model = payload.whisper_model or settings.WHISPER_MODEL or "tiny"
+        raw_subtitle_items = WhisperService.transcribe(
+            audio_path=audio_wav_path,
+            source_language=payload.source_language,
+            model_size=whisper_model
+        )
+
+        if not raw_subtitle_items:
+            raise RuntimeError("Không nhận diện được giọng nói trong âm thanh video.")
+
+        original_srt = SRTService.generate_srt_from_items(raw_subtitle_items)
+
+        # Step 4: Translate with Gemini API
+        gemini = GeminiTranslationService(
+            api_key=resolved_api_key,
+            model_name=payload.model_name or settings.GEMINI_MODEL
+        )
+
+        pair_items = gemini.translate_all(
+            items=raw_subtitle_items,
+            source_lang=payload.source_language,
+            target_lang=payload.target_language,
+            translation_style=payload.translation_style,
+            context_hint=payload.context_hint
+        )
+
+        translated_srt = SRTService.generate_srt_from_pairs(pair_items, use_translated=True)
+
+        # Clean up temporary audio file to save disk space
+        if audio_wav_path.exists():
+            try:
+                audio_wav_path.unlink()
+            except Exception:
+                pass
+
+        # Step 5: Burn subtitles directly into video (Hardsub MP4)
+        subtitled_filename = f"{job_id}_subtitled.mp4"
+        subtitled_save_path = settings.UPLOADS_DIR / subtitled_filename
+        subtitled_video_url = None
+
+        try:
+            VideoService.burn_subtitles_to_mp4(
+                input_video_path=video_save_path,
+                srt_content=translated_srt,
+                output_mp4_path=subtitled_save_path,
+                font_size=payload.font_size,
+                font_color=payload.font_color,
+                outline_color=payload.outline_color,
+                border_style=payload.border_style,
+                position=payload.position,
+                preset=payload.preset
+            )
+            subtitled_video_url = f"/storage/uploads/{subtitled_filename}"
+        except Exception as burn_err:
+            logger.warning(f"Could not automatically burn subtitles to MP4: {burn_err}")
+
+        # Update History
+        HistoryService.update_record(
+            db=db,
+            job_id=job_id,
+            status="completed",
+            original_srt_content=original_srt,
+            translated_srt_content=translated_srt,
+            subtitles_count=len(pair_items),
+            subtitled_video_path=subtitled_video_url
+        )
+
+        return TranslationResultResponse(
+            job_id=job_id,
+            file_name=video_title,
+            file_type="video",
+            source_language=payload.source_language,
+            target_language=payload.target_language,
+            subtitles_count=len(pair_items),
+            items=pair_items,
+            video_url=video_relative_url,
+            subtitled_video_url=subtitled_video_url,
+            translated_srt=translated_srt
+        )
+
+    except Exception as e:
+        if audio_wav_path.exists():
+            try:
+                audio_wav_path.unlink()
+            except Exception:
+                pass
+        HistoryService.update_record(
+            db=db,
+            job_id=job_id,
+            status="failed",
+            error_message=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Quá trình dịch video thất bại: {str(e)}")
 
 @router.post("/video/translate", response_model=TranslationResultResponse)
 async def translate_video(

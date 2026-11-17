@@ -14,9 +14,21 @@ import {
   FileText,
   Key,
   ShieldAlert,
-  Download
+  Download,
+  Link as LinkIcon,
+  Globe,
+  X,
+  Play,
+  Film
 } from 'lucide-react';
-import { parseSrtFile, translateSrtItems, translateVideoFile, renderSubtitledVideo } from '../services/api';
+import { 
+  parseSrtFile, 
+  translateSrtItems, 
+  translateVideoFile, 
+  translateVideoUrl,
+  getVideoUrlInfo,
+  renderSubtitledVideo 
+} from '../services/api';
 import { SOURCE_LANGUAGES, TARGET_LANGUAGES } from '../utils/languages';
 import SubtitleEditor from '../components/SubtitleEditor';
 import VideoSubtitlePlayer from '../components/VideoSubtitlePlayer';
@@ -27,6 +39,7 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
   const initialMode = searchParams.get('tab') === 'video' ? 'video' : 'srt';
 
   const [activeTab, setActiveTab] = useState(initialMode); // 'srt' or 'video'
+  const [videoInputMode, setVideoInputMode] = useState('url'); // 'url' (default) or 'file'
 
   React.useEffect(() => {
     const tab = searchParams.get('tab');
@@ -35,10 +48,17 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
       resetAll();
     }
   }, [searchParams]);
+
   const [sourceLang, setSourceLang] = useState('auto');
   const [targetLang, setTargetLang] = useState('vi');
   const [translationStyle, setTranslationStyle] = useState('cinematic');
   const [contextHint, setContextHint] = useState('');
+  const [whisperModel, setWhisperModel] = useState('tiny'); // 'tiny' or 'base'
+
+  // Video URL state
+  const [videoUrl, setVideoUrl] = useState('');
+  const [urlInfo, setUrlInfo] = useState(null);
+  const [fetchingInfo, setFetchingInfo] = useState(false);
 
   // File state
   const [selectedFile, setSelectedFile] = useState(null);
@@ -46,7 +66,7 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
 
   // Status & Progress
   const [processing, setProcessing] = useState(false);
-  const [progressStage, setProgressStage] = useState(''); // e.g. "Extracting audio...", "Whisper transcribing..."
+  const [progressStage, setProgressStage] = useState('');
   const [uploadPercent, setUploadPercent] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -93,7 +113,55 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
     }
   };
 
-  // Handle Drag & Drop
+  // URL Handling
+  const handleUrlChange = (val) => {
+    setVideoUrl(val);
+    setErrorMsg('');
+    if (!val.trim()) {
+      setUrlInfo(null);
+    }
+  };
+
+  const handleClearUrl = () => {
+    setVideoUrl('');
+    setUrlInfo(null);
+    setErrorMsg('');
+  };
+
+  const handleCheckUrl = async () => {
+    const clean = videoUrl.trim();
+    if (!clean) return;
+    setFetchingInfo(true);
+    setErrorMsg('');
+    try {
+      const info = await getVideoUrlInfo(clean);
+      setUrlInfo(info);
+    } catch (err) {
+      setErrorMsg(err.response?.data?.detail || err.message || 'Không thể đọc thông tin video từ đường dẫn.');
+    } finally {
+      setFetchingInfo(false);
+    }
+  };
+
+  const handlePasteUrl = async (e) => {
+    const text = e.clipboardData?.getData('text');
+    if (text && (text.startsWith('http://') || text.startsWith('https://'))) {
+      const clean = text.trim();
+      setVideoUrl(clean);
+      setErrorMsg('');
+      setFetchingInfo(true);
+      try {
+        const info = await getVideoUrlInfo(clean);
+        setUrlInfo(info);
+      } catch (err) {
+        // Silently ignore preview error on paste so user can still submit
+      } finally {
+        setFetchingInfo(false);
+      }
+    }
+  };
+
+  // Handle Drag & Drop for Files
   const handleDragOver = (e) => {
     e.preventDefault();
   };
@@ -131,6 +199,8 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
 
   const resetAll = () => {
     setSelectedFile(null);
+    setVideoUrl('');
+    setUrlInfo(null);
     setResultData(null);
     setErrorMsg('');
     setProcessing(false);
@@ -143,9 +213,20 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
 
   // Main Submit handler
   const handleTranslate = async () => {
-    if (!selectedFile) {
-      setErrorMsg('Vui lòng chọn file trước khi bắt đầu dịch.');
+    if (activeTab === 'srt' && !selectedFile) {
+      setErrorMsg('Vui lòng chọn file SRT trước khi bắt đầu dịch.');
       return;
+    }
+
+    if (activeTab === 'video') {
+      if (videoInputMode === 'url' && !videoUrl.trim()) {
+        setErrorMsg('Vui lòng dán link video (YouTube, TikTok, Facebook, URL MP4...)');
+        return;
+      }
+      if (videoInputMode === 'file' && !selectedFile) {
+        setErrorMsg('Vui lòng chọn file video từ máy tính trước khi bắt đầu dịch.');
+        return;
+      }
     }
 
     if (!config?.has_gemini_api_key) {
@@ -175,8 +256,44 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
         });
 
         setResultData(result);
+      } else if (activeTab === 'video' && videoInputMode === 'url') {
+        // Video from URL
+        setProgressStage('1/4. Đang kết nối & tải video từ URL (YouTube/Web)...');
+
+        const stageTimer1 = setTimeout(() => {
+          setProgressStage('2/4. Đang trích xuất âm thanh (FFmpeg) & Nhận diện giọng nói (Whisper AI)...');
+        }, 9000);
+        const stageTimer2 = setTimeout(() => {
+          setProgressStage('3/4. Đang dịch phụ đề ngữ cảnh chuyên sâu với Gemini AI...');
+        }, 22000);
+        const stageTimer3 = setTimeout(() => {
+          setProgressStage('4/4. Đang gắn phụ đề trực tiếp vào video (Hardsub MP4)...');
+        }, 36000);
+
+        try {
+          const result = await translateVideoUrl({
+            url: videoUrl.trim(),
+            source_language: sourceLang,
+            target_language: targetLang,
+            translation_style: translationStyle,
+            context_hint: contextHint,
+            whisper_model: whisperModel,
+            font_size: fontSize,
+            font_color: fontColor,
+            outline_color: outlineColor,
+            border_style: borderStyle,
+            position: position,
+            preset: preset,
+          });
+
+          setResultData(result);
+        } finally {
+          clearTimeout(stageTimer1);
+          clearTimeout(stageTimer2);
+          clearTimeout(stageTimer3);
+        }
       } else {
-        // Video translation
+        // Video from uploaded local file
         setProgressStage('1/4. Đang tải video lên máy chủ...');
         const result = await translateVideoFile({
           file: selectedFile,
@@ -216,36 +333,30 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
     }
   };
 
+  const isSubmitDisabled = processing || (
+    activeTab === 'srt' 
+      ? !selectedFile 
+      : (videoInputMode === 'url' ? !videoUrl.trim() : !selectedFile)
+  );
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Workspace Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-            Không gian Dịch Phụ đề AI
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center space-x-2.5">
+            <span>Không gian Dịch Phụ đề AI</span>
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Chọn file SRT hoặc Video để bắt đầu quá trình trích xuất và chuyển ngữ
+            {activeTab === 'video'
+              ? 'Dán link video (YouTube, TikTok, Facebook...) hoặc tải file để AI tự động trích xuất âm thanh và dịch'
+              : 'Tải file phụ đề SRT để chuyển ngữ nhanh chóng giữ nguyên mốc thời gian'}
           </p>
         </div>
 
         {/* Tab switch buttons */}
         {!resultData && (
           <div className="inline-flex p-1 rounded-xl bg-dark-900 border border-dark-700 self-start">
-            <button
-              onClick={() => {
-                setActiveTab('srt');
-                resetAll();
-              }}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'srt'
-                  ? 'bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Subtitles className="w-4 h-4" />
-              <span>Dịch file SRT</span>
-            </button>
             <button
               onClick={() => {
                 setActiveTab('video');
@@ -260,6 +371,20 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
               <Video className="w-4 h-4" />
               <span>Dịch từ Video</span>
             </button>
+            <button
+              onClick={() => {
+                setActiveTab('srt');
+                resetAll();
+              }}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                activeTab === 'srt'
+                  ? 'bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Subtitles className="w-4 h-4" />
+              <span>Dịch file SRT</span>
+            </button>
           </div>
         )}
       </div>
@@ -267,62 +392,226 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
       {/* Main Container */}
       {!resultData ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left 2 Cols: Upload and Settings */}
+          {/* Left 2 Cols: Link Paste / File Upload Area */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Upload Box */}
-            <div
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`relative border-2 border-dashed rounded-3xl p-8 sm:p-12 text-center cursor-pointer transition-all ${
-                selectedFile
-                  ? 'border-accent-500/50 bg-dark-900/90'
-                  : 'border-dark-700 hover:border-primary-500/50 bg-dark-900/50 hover:bg-dark-900/80'
-              }`}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={activeTab === 'srt' ? '.srt,.sub,.ass,.ssa' : 'video/*,.mp4,.mkv,.mov,.webm,.avi'}
-                onChange={handleFileChange}
-                className="hidden"
-              />
+            
+            {/* If Video Tab and URL Mode: Primary Clean Paste Box */}
+            {activeTab === 'video' && videoInputMode === 'url' && (
+              <div className="p-6 sm:p-8 rounded-3xl bg-dark-900 border border-dark-700 shadow-xl space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-dark-800">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-600/30 to-accent-600/30 border border-purple-500/40 flex items-center justify-center text-accent-400">
+                      <LinkIcon className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Dán Link Video để Dịch Tự Động</h3>
+                      <p className="text-xs text-slate-400">Không cần tải file về máy – AI sẽ tự động phân tích và dịch trực tiếp</p>
+                    </div>
+                  </div>
 
-              <div className="flex flex-col items-center justify-center space-y-4">
-                <div className="w-16 h-16 rounded-2xl bg-primary-600/20 border border-primary-500/30 flex items-center justify-center text-accent-400">
-                  {activeTab === 'srt' ? (
-                    <Subtitles className="w-8 h-8" />
-                  ) : (
-                    <Video className="w-8 h-8" />
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVideoInputMode('file');
+                      setErrorMsg('');
+                    }}
+                    className="text-[11px] font-semibold text-slate-400 hover:text-accent-400 flex items-center space-x-1.5 self-start sm:self-auto px-3 py-1.5 rounded-lg bg-dark-800/90 hover:bg-dark-800 border border-dark-700 transition-colors"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Hoặc tải file từ máy tính</span>
+                  </button>
                 </div>
 
-                {selectedFile ? (
-                  <div>
-                    <h3 className="text-base font-bold text-white max-w-md truncate">
-                      {selectedFile.name}
-                    </h3>
-                    <p className="text-xs text-accent-400 mt-1 font-mono">
-                      {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Sẵn sàng dịch
-                    </p>
-                    <p className="text-[11px] text-slate-500 mt-2">
-                      Nhấp để chọn file khác
-                    </p>
+                {/* URL Input Bar */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                    Đường dẫn video (URL)
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                      <Globe className="w-5 h-5 text-accent-400" />
+                    </div>
+                    <input
+                      type="url"
+                      value={videoUrl}
+                      onChange={(e) => handleUrlChange(e.target.value)}
+                      onPaste={handlePasteUrl}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !isSubmitDisabled) {
+                          handleTranslate();
+                        }
+                      }}
+                      placeholder="Dán link YouTube, TikTok, Facebook, MP4 URL..."
+                      className="w-full pl-12 pr-32 py-4 bg-dark-950 border-2 border-dark-700 focus:border-accent-500 rounded-2xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none transition-all font-mono"
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center space-x-1.5">
+                      {videoUrl && (
+                        <button
+                          type="button"
+                          onClick={handleClearUrl}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-dark-800 transition-colors"
+                          title="Xóa link"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleCheckUrl}
+                        disabled={!videoUrl.trim() || fetchingInfo}
+                        className="px-3 py-2 rounded-xl bg-accent-600 hover:bg-accent-500 text-white text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center space-x-1 shadow-md shadow-accent-600/20"
+                      >
+                        {fetchingInfo ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <span>Kiểm tra link</span>
+                        )}
+                      </button>
+                    </div>
                   </div>
-                ) : (
-                  <div>
-                    <h3 className="text-base font-bold text-white">
-                      Kéo thả file vào đây hoặc <span className="text-accent-400 underline">chọn từ máy tính</span>
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-1">
-                      {activeTab === 'srt'
-                        ? 'Chấp nhận định dạng file .srt phụ đề'
-                        : 'Hỗ trợ video MP4, MKV, MOV, WebM'}
-                    </p>
+                </div>
+
+                {/* Supported Platform Badges */}
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                  <span className="font-semibold text-slate-500">Hỗ trợ tự động:</span>
+                  <span className="px-2 py-0.5 rounded-md bg-dark-950 border border-dark-800 text-red-400 font-medium">
+                    YouTube (Video & Shorts)
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-dark-950 border border-dark-800 text-cyan-400 font-medium">
+                    TikTok
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-dark-950 border border-dark-800 text-blue-400 font-medium">
+                    Facebook
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-dark-950 border border-dark-800 text-slate-300 font-medium">
+                    X / Twitter
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-dark-950 border border-dark-800 text-emerald-400 font-medium">
+                    Link MP4 trực tiếp
+                  </span>
+                </div>
+
+                {/* URL Preview Card */}
+                {urlInfo && (
+                  <div className="p-4 rounded-2xl bg-dark-950 border border-dark-700 flex flex-col sm:flex-row items-start sm:items-center gap-4 animate-in fade-in duration-300">
+                    {urlInfo.thumbnail && (
+                      <div className="relative w-full sm:w-40 h-24 rounded-xl overflow-hidden border border-dark-700 shrink-0 bg-dark-900 flex items-center justify-center">
+                        <img
+                          src={urlInfo.thumbnail}
+                          alt={urlInfo.title}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+                          <Play className="w-8 h-8 text-white/80 drop-shadow" />
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold uppercase tracking-wider">
+                          Đã nhận diện link
+                        </span>
+                        {urlInfo.duration_string && (
+                          <span className="text-xs text-slate-300 flex items-center space-x-1 font-mono bg-dark-900 px-2 py-0.5 rounded border border-dark-800">
+                            <Clock className="w-3 h-3 text-accent-400" />
+                            <span>{urlInfo.duration_string}</span>
+                          </span>
+                        )}
+                        {urlInfo.uploader && (
+                          <span className="text-xs text-slate-400 truncate">
+                            Kênh: <strong className="text-white">{urlInfo.uploader}</strong>
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="text-sm font-bold text-white line-clamp-2" title={urlInfo.title}>
+                        {urlInfo.title}
+                      </h4>
+                      <p className="text-[11px] text-slate-500 truncate font-mono">
+                        {urlInfo.webpage_url}
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
-            </div>
+            )}
+
+            {/* If SRT Tab OR Video File Mode: Drag and Drop Upload Box */}
+            {(activeTab === 'srt' || (activeTab === 'video' && videoInputMode === 'file')) && (
+              <div className="space-y-4">
+                {activeTab === 'video' && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-400">
+                      Đang chọn chế độ: <strong>Tải file từ máy tính</strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVideoInputMode('url');
+                        setErrorMsg('');
+                      }}
+                      className="text-xs font-bold text-accent-400 hover:text-accent-300 flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-accent-950/40 border border-accent-500/30 transition-colors"
+                    >
+                      <LinkIcon className="w-3.5 h-3.5" />
+                      <span>Chuyển sang Dán link video (YouTube/Web)</span>
+                    </button>
+                  </div>
+                )}
+
+                <div
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`relative border-2 border-dashed rounded-3xl p-8 sm:p-12 text-center cursor-pointer transition-all ${
+                    selectedFile
+                      ? 'border-accent-500/50 bg-dark-900/90'
+                      : 'border-dark-700 hover:border-primary-500/50 bg-dark-900/50 hover:bg-dark-900/80'
+                  }`}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={activeTab === 'srt' ? '.srt,.sub,.ass,.ssa' : 'video/*,.mp4,.mkv,.mov,.webm,.avi'}
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+
+                  <div className="flex flex-col items-center justify-center space-y-4">
+                    <div className="w-16 h-16 rounded-2xl bg-primary-600/20 border border-primary-500/30 flex items-center justify-center text-accent-400">
+                      {activeTab === 'srt' ? (
+                        <Subtitles className="w-8 h-8" />
+                      ) : (
+                        <Video className="w-8 h-8" />
+                      )}
+                    </div>
+
+                    {selectedFile ? (
+                      <div>
+                        <h3 className="text-base font-bold text-white max-w-md truncate">
+                          {selectedFile.name}
+                        </h3>
+                        <p className="text-xs text-accent-400 mt-1 font-mono">
+                          {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Sẵn sàng dịch
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-2">
+                          Nhấp để chọn file khác
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <h3 className="text-base font-bold text-white">
+                          Kéo thả file vào đây hoặc <span className="text-accent-400 underline">chọn từ máy tính</span>
+                        </h3>
+                        <p className="text-xs text-slate-400 mt-1">
+                          {activeTab === 'srt'
+                            ? 'Chấp nhận định dạng file .srt phụ đề'
+                            : 'Hỗ trợ video MP4, MKV, MOV, WebM'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Error Message */}
             {errorMsg && (
@@ -350,7 +639,7 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
 
                 <div className="w-full h-2 rounded-full bg-dark-950 overflow-hidden">
                   <div
-                    className="h-full bg-gradient-to-r from-primary-500 to-accent-400 transition-all duration-300"
+                    className="h-full bg-gradient-to-r from-primary-500 to-accent-400 transition-all duration-500"
                     style={{
                       width: uploadPercent > 0 && uploadPercent < 100 ? `${uploadPercent}%` : '100%',
                     }}
@@ -358,7 +647,7 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                 </div>
 
                 <p className="text-[11px] text-slate-500 text-center">
-                  Quá trình có thể mất từ 10 - 60 giây tuỳ thuộc vào độ dài video và số lượng câu phụ đề.
+                  Quá trình có thể mất từ 15 - 60 giây tuỳ thuộc vào độ dài video và tốc độ mạng. Vui lòng không đóng trang.
                 </p>
               </div>
             )}
@@ -426,6 +715,24 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                   <option value="formal">💼 Trang trọng & Tài liệu (Lịch sự, chuẩn mực)</option>
                 </select>
               </div>
+
+              {/* Whisper Model Selection (Only for Video Tab) */}
+              {activeTab === 'video' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase flex items-center justify-between">
+                    <span>Mô hình Whisper AI</span>
+                    <span className="text-[10px] text-accent-400 font-bold uppercase">Nhận diện âm thanh</span>
+                  </label>
+                  <select
+                    value={whisperModel}
+                    onChange={(e) => setWhisperModel(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-dark-950 border border-dark-700 rounded-xl text-xs text-white focus:outline-none focus:border-accent-500 font-medium"
+                  >
+                    <option value="tiny">⚡ Siêu tốc (Whisper Tiny - Tối ưu thời gian)</option>
+                    <option value="base">🎯 Chuẩn xác (Whisper Base - Nhận diện chi tiết hơn)</option>
+                  </select>
+                </div>
+              )}
 
               {/* Context Hint / Custom Glossary */}
               <div>
@@ -533,7 +840,7 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                   {/* Processing Speed / Preset */}
                   <div>
                     <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                      Tốc độ xử lý video
+                      Tốc độ render Hardsub
                     </label>
                     <select
                       value={preset}
@@ -570,8 +877,8 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
               {/* Action Button */}
               <button
                 onClick={handleTranslate}
-                disabled={!selectedFile || processing}
-                className="w-full py-3.5 rounded-xl font-bold text-xs bg-gradient-to-r from-primary-600 via-primary-500 to-accent-600 hover:from-primary-500 hover:to-accent-500 text-white shadow-lg shadow-primary-600/25 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-all"
+                disabled={isSubmitDisabled}
+                className="w-full py-3.5 rounded-xl font-bold text-xs bg-gradient-to-r from-primary-600 via-primary-500 to-accent-600 hover:from-primary-500 hover:to-accent-500 text-white shadow-lg shadow-primary-600/25 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-all hover:scale-[1.01]"
               >
                 {processing ? (
                   <>
@@ -581,7 +888,13 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>Bắt đầu dịch ({activeTab === 'srt' ? 'SRT' : 'Video'})</span>
+                    <span>
+                      {activeTab === 'srt'
+                        ? 'Bắt đầu dịch file SRT'
+                        : videoInputMode === 'url'
+                        ? 'Bắt đầu dịch Video từ Link'
+                        : 'Bắt đầu dịch Video File'}
+                    </span>
                   </>
                 )}
               </button>
@@ -599,7 +912,7 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center space-x-2">
-                  <span>{resultData.file_name}</span>
+                  <span className="truncate max-w-md">{resultData.file_name}</span>
                   <span className="text-[10px] px-2 py-0.5 rounded bg-dark-800 text-accent-400 font-mono uppercase">
                     {resultData.file_type}
                   </span>
@@ -632,7 +945,7 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                 className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-dark-800 hover:bg-dark-700 border border-dark-700 text-slate-300 text-xs font-semibold transition-colors"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>Dịch file khác</span>
+                <span>Dịch video khác</span>
               </button>
             </div>
           </div>
@@ -648,55 +961,56 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                   fileName={resultData.file_name}
                   items={resultData.items}
                   currentTimeMs={videoCurrentTimeMs}
-                  onTimeUpdate={(timeMs) => setVideoCurrentTimeMs(timeMs)}
-                  onOpenMp4Config={() => setIsMp4ModalOpen(true)}
+                  onTimeUpdate={(ms) => setVideoCurrentTimeMs(ms)}
                 />
               </div>
 
-              {/* Subtitle Editor on Right */}
-              <div className="lg:col-span-7">
+              {/* Subtitle Editor on Right / Bottom */}
+              <div className="lg:col-span-7 space-y-4">
                 <SubtitleEditor
+                  items={resultData.items}
                   jobId={resultData.job_id}
                   fileName={resultData.file_name}
-                  sourceLang={resultData.source_language}
-                  targetLang={resultData.target_language}
-                  items={resultData.items}
-                  onItemsChange={(newItems) =>
-                    setResultData({ ...resultData, items: newItems })
-                  }
-                  currentTimeMs={videoCurrentTimeMs}
-                  onSeek={(startMs) => setVideoCurrentTimeMs(startMs)}
-                  onOpenMp4Config={() => setIsMp4ModalOpen(true)}
-                  isVideo={true}
-                  subtitledVideoUrl={resultData.subtitled_video_url}
+                  videoUrl={resultData.video_url}
+                  videoCurrentTimeMs={videoCurrentTimeMs}
+                  onSeekVideo={(ms) => setVideoCurrentTimeMs(ms)}
+                  onItemsUpdated={(newItems) => {
+                    setResultData((prev) => ({
+                      ...prev,
+                      items: newItems,
+                    }));
+                  }}
+                  onOpenMp4Modal={() => setIsMp4ModalOpen(true)}
                   onReRenderVideo={handleReRenderVideo}
                   isReRendering={isReRendering}
                 />
               </div>
             </div>
           ) : (
-            /* Pure SRT Editor (Full width) */
+            /* SRT-only mode: Full width editor */
             <SubtitleEditor
+              items={resultData.items}
               jobId={resultData.job_id}
               fileName={resultData.file_name}
-              sourceLang={resultData.source_language}
-              targetLang={resultData.target_language}
-              items={resultData.items}
-              onItemsChange={(newItems) =>
-                setResultData({ ...resultData, items: newItems })
-              }
+              videoUrl={null}
+              onItemsUpdated={(newItems) => {
+                setResultData((prev) => ({
+                  ...prev,
+                  items: newItems,
+                }));
+              }}
+              onOpenMp4Modal={() => {}}
             />
           )}
 
-          {/* MP4 Subtitle Config & Export Modal */}
-          {resultData.video_url && (
+          {/* Export MP4 Modal */}
+          {isMp4ModalOpen && (
             <Mp4ConfigModal
               isOpen={isMp4ModalOpen}
               onClose={() => setIsMp4ModalOpen(false)}
               jobId={resultData.job_id}
               fileName={resultData.file_name}
               items={resultData.items}
-              defaultSource="translated"
             />
           )}
         </div>

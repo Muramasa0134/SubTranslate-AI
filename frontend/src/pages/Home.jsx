@@ -19,8 +19,8 @@ export default function Home({ config, onOpenKeyModal }) {
   const steps = [
     {
       num: '01',
-      title: 'Tải lên SRT hoặc Video',
-      desc: 'Hỗ trợ file phụ đề .srt hoặc video .mp4, .mkv, .mov, .webm dung lượng linh hoạt.',
+      title: 'Dán Link Video hoặc Tải file',
+      desc: 'Dán link YouTube, TikTok, Facebook, MP4 URL hoặc tải file từ máy tính nhanh chóng.',
       icon: Video,
       accent: 'from-blue-500 to-indigo-600',
     },
@@ -91,7 +91,7 @@ export default function Home({ config, onOpenKeyModal }) {
           </h1>
 
           <p className="mt-6 text-base sm:text-lg text-slate-300 max-w-2xl mx-auto leading-relaxed">
-            Chuyển ngữ phụ đề từ file <strong>.srt</strong> hoặc trích xuất giọng nói trực tiếp từ <strong>video</strong>. Giữ nguyên mốc thời gian, xem thử phụ đề đồng bộ trên video và tải về file hoàn chỉnh.
+            Dán link video trực tiếp từ <strong>YouTube, TikTok, Facebook, MP4 URL</strong> hoặc tải file lên. AI sẽ tự động trích xuất âm thanh, nhận diện phụ đề Whisper và chuyển ngữ với Google Gemini.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">

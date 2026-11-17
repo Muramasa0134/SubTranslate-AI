@@ -94,3 +94,31 @@ class ExportMp4Request(BaseModel):
     config: Optional[Mp4ExportConfig] = None
     items: Optional[List[SubtitlePairItem]] = None
 
+class VideoUrlInfoRequest(BaseModel):
+    url: str
+
+class VideoUrlInfoResponse(BaseModel):
+    title: str
+    duration: Optional[float] = None
+    duration_string: Optional[str] = None
+    thumbnail: Optional[str] = None
+    uploader: Optional[str] = None
+    webpage_url: str
+
+class TranslateVideoUrlRequest(BaseModel):
+    url: str
+    source_language: str = "auto"
+    target_language: str = "vi"
+    api_key: Optional[str] = None
+    model_name: Optional[str] = None
+    whisper_model: Optional[str] = None
+    translation_style: Optional[str] = "cinematic"
+    context_hint: Optional[str] = None
+    font_size: int = 22
+    font_color: str = "#FFFFFF"
+    outline_color: str = "#000000"
+    border_style: int = 1
+    position: str = "bottom"
+    preset: str = "ultrafast"
+
+

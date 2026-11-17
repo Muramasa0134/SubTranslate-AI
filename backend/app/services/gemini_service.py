@@ -133,7 +133,7 @@ Return strictly a JSON array formatted like:
 """
 
         models_to_try = [self.model_name]
-        for fallback in ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]:
+        for fallback in ["gemini-3.5-flash-lite", "gemini-3.5-flash"]:
             if fallback not in models_to_try:
                 models_to_try.append(fallback)
 
@@ -141,11 +141,9 @@ Return strictly a JSON array formatted like:
         last_error = None
         for m_name in models_to_try:
             try:
-                # Disable thinking tokens to slash latency from ~28s down to ~1.5s
                 gen_config = types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    temperature=0.3,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0)
+                    temperature=0.3
                 )
                 response = self.client.models.generate_content(
                     model=m_name,
@@ -155,22 +153,8 @@ Return strictly a JSON array formatted like:
                 if response and response.text:
                     break
             except Exception as e:
-                # If thinking_budget=0 is not supported on a specific model, fallback without it
-                try:
-                    fallback_config = types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.3
-                    )
-                    response = self.client.models.generate_content(
-                        model=m_name,
-                        contents=prompt,
-                        config=fallback_config
-                    )
-                    if response and response.text:
-                        break
-                except Exception as inner_e:
-                    logger.warning(f"Gemini model {m_name} failed: {inner_e}. Trying next fallback...")
-                    last_error = inner_e
+                logger.warning(f"Gemini model {m_name} failed: {e}. Trying next fallback...")
+                last_error = e
 
         if response is None or not response.text:
             logger.error(f"All Gemini models failed: {last_error}")
