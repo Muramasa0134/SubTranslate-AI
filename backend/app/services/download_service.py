@@ -41,6 +41,43 @@ def ensure_ffmpeg_ready() -> Optional[str]:
 
     return str(ffmpeg_dir)
 
+def format_download_error(e: Exception, url: str) -> str:
+    import re
+    msg = str(e)
+    # Strip terminal ANSI escape codes like [0;31m, [0m
+    msg = re.sub(r'\x1b\[[0-9;]*m', '', msg)
+    msg = re.sub(r'\[[0-9;]+m', '', msg).strip()
+
+    # Known protected/DRM platforms
+    protected_platforms = {
+        'fptplay.vn': 'FPT Play',
+        'netflix.com': 'Netflix',
+        'vieon.vn': 'VieON',
+        'galaxyplay.vn': 'Galaxy Play',
+        'tv360.vn': 'TV360',
+        'iq.com': 'iQIYI',
+        'wetv.vip': 'WeTV',
+        'bilibili.tv': 'Bilibili Premium',
+        'disneyplus.com': 'Disney+',
+    }
+
+    url_lower = url.lower()
+    for domain, name in protected_platforms.items():
+        if domain in url_lower:
+            return (
+                f"Nền tảng {name} chặn tải video trực tiếp do cơ chế bản quyền DRM và yêu cầu tài khoản bảo mật. "
+                f"💡 Để xem và dịch video này, hãy chuyển sang tính năng 'Live Subtitle Widget': "
+                f"Bật video trên tab {name} và mở cửa sổ phụ đề nổi (PiP) để AI nghe và dịch trực tiếp âm thanh theo thời gian thực!"
+            )
+
+    if "403: Forbidden" in msg or "HTTP Error 403" in msg or "DRM" in msg:
+        return (
+            "Trang web này từ chối quyền truy cập tải video (HTTP 403 Forbidden / DRM bản quyền). "
+            "💡 Đối với các trang phim có bản quyền, hãy dùng tính năng 'Live Subtitle Widget' để phát video trên trình duyệt và dịch trực tiếp âm thanh!"
+        )
+
+    return f"Không thể đọc thông tin video: {msg}"
+
 class DownloadService:
     @staticmethod
     def get_video_info(url: str) -> Dict[str, Any]:
@@ -83,7 +120,7 @@ class DownloadService:
                 }
         except Exception as e:
             logger.error(f"Error extracting video info from {clean_url}: {e}")
-            raise RuntimeError(f"Không thể đọc thông tin video: {str(e)}")
+            raise RuntimeError(format_download_error(e, clean_url))
 
     @staticmethod
     def download_video(url: str, output_mp4_path: Path, max_height: int = 1080) -> Dict[str, Any]:
@@ -160,4 +197,4 @@ class DownloadService:
                 }
         except Exception as e:
             logger.error(f"Download video failed for {clean_url}: {e}")
-            raise RuntimeError(f"Lỗi khi tải video từ link: {str(e)}")
+            raise RuntimeError(format_download_error(e, clean_url))

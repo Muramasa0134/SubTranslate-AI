@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { 
   Subtitles, 
   Video, 
@@ -19,7 +19,8 @@ import {
   Globe,
   X,
   Play,
-  Film
+  Film,
+  Radio
 } from 'lucide-react';
 import { 
   parseSrtFile, 
@@ -615,12 +616,30 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
 
             {/* Error Message */}
             {errorMsg && (
-              <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-rose-300 text-xs flex items-start space-x-3">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
-                <div className="space-y-1">
-                  <p className="font-semibold">Lỗi trong quá trình xử lý:</p>
-                  <p className="leading-relaxed">{errorMsg}</p>
+              <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-rose-300 text-xs space-y-3">
+                <div className="flex items-start space-x-3">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                  <div className="space-y-1">
+                    <p className="font-semibold">Thông báo xử lý:</p>
+                    <p className="leading-relaxed whitespace-pre-line">{errorMsg}</p>
+                  </div>
                 </div>
+
+                {(errorMsg.includes('Live Subtitle Widget') || errorMsg.includes('FPT Play') || errorMsg.includes('bản quyền') || errorMsg.includes('Bản quyền')) && (
+                  <div className="pt-2 border-t border-rose-500/20 flex flex-wrap items-center gap-3">
+                    <Link
+                      to="/live-widget"
+                      className="inline-flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all hover:scale-102"
+                    >
+                      <Radio className="w-4 h-4 animate-pulse" />
+                      <span>Mở Live Subtitle Widget (Dịch trực tiếp FPT Play)</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
+                    <span className="text-[11px] text-slate-400">
+                      (Bật video trên FPT Play và để cửa sổ nổi hiển thị phụ đề song song)
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 
