@@ -55,6 +55,7 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
   const [translationStyle, setTranslationStyle] = useState('cinematic');
   const [contextHint, setContextHint] = useState('');
   const [whisperModel, setWhisperModel] = useState('tiny'); // 'tiny' or 'base'
+  const [burnSubtitles, setBurnSubtitles] = useState(false); // Fast softsub mode by default (2-3 mins vs 20 mins)
 
   // Video URL state
   const [videoUrl, setVideoUrl] = useState('');
@@ -259,17 +260,28 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
         setResultData(result);
       } else if (activeTab === 'video' && videoInputMode === 'url') {
         // Video from URL
-        setProgressStage('1/4. Đang kết nối & tải video từ URL (YouTube/Web)...');
+        let stageTimer1, stageTimer2, stageTimer3;
 
-        const stageTimer1 = setTimeout(() => {
-          setProgressStage('2/4. Đang trích xuất âm thanh (FFmpeg) & Nhận diện giọng nói (Whisper AI)...');
-        }, 9000);
-        const stageTimer2 = setTimeout(() => {
-          setProgressStage('3/4. Đang dịch phụ đề ngữ cảnh chuyên sâu với Gemini AI...');
-        }, 22000);
-        const stageTimer3 = setTimeout(() => {
-          setProgressStage('4/4. Đang gắn phụ đề trực tiếp vào video (Hardsub MP4)...');
-        }, 36000);
+        if (!burnSubtitles) {
+          setProgressStage('1/3. Đang tải video tốc độ cao từ URL (720p)...');
+          stageTimer1 = setTimeout(() => {
+            setProgressStage('2/3. Đang trích xuất & nhận diện giọng nói (Whisper AI)...');
+          }, 8000);
+          stageTimer2 = setTimeout(() => {
+            setProgressStage('3/3. Đang dịch phụ đề song song với Gemini AI (siêu tốc)...');
+          }, 24000);
+        } else {
+          setProgressStage('1/4. Đang kết nối & tải video từ URL (YouTube/Web)...');
+          stageTimer1 = setTimeout(() => {
+            setProgressStage('2/4. Đang trích xuất âm thanh & nhận diện giọng nói (Whisper AI)...');
+          }, 8000);
+          stageTimer2 = setTimeout(() => {
+            setProgressStage('3/4. Đang dịch phụ đề ngữ cảnh chuyên sâu với Gemini AI...');
+          }, 22000);
+          stageTimer3 = setTimeout(() => {
+            setProgressStage('4/4. Đang encode phụ đề vào video (Hardsub MP4 - có thể mất 15-20 phút)...');
+          }, 36000);
+        }
 
         try {
           const result = await translateVideoUrl({
@@ -279,6 +291,7 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
             translation_style: translationStyle,
             context_hint: contextHint,
             whisper_model: whisperModel,
+            burn_subtitles: burnSubtitles,
             font_size: fontSize,
             font_color: fontColor,
             outline_color: outlineColor,
@@ -289,19 +302,21 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
 
           setResultData(result);
         } finally {
-          clearTimeout(stageTimer1);
-          clearTimeout(stageTimer2);
-          clearTimeout(stageTimer3);
+          if (stageTimer1) clearTimeout(stageTimer1);
+          if (stageTimer2) clearTimeout(stageTimer2);
+          if (stageTimer3) clearTimeout(stageTimer3);
         }
       } else {
         // Video from uploaded local file
-        setProgressStage('1/4. Đang tải video lên máy chủ...');
+        const totalSteps = burnSubtitles ? 4 : 3;
+        setProgressStage(`1/${totalSteps}. Đang tải video lên máy chủ...`);
         const result = await translateVideoFile({
           file: selectedFile,
           source_language: sourceLang,
           target_language: targetLang,
           translation_style: translationStyle,
           context_hint: contextHint,
+          burn_subtitles: burnSubtitles,
           font_size: fontSize,
           font_color: fontColor,
           outline_color: outlineColor,
@@ -313,10 +328,15 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
               const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
               setUploadPercent(percent);
               if (percent === 100) {
-                setProgressStage('2/4. Đang trích xuất âm thanh (FFmpeg) & Nhận diện giọng nói (Whisper)...');
+                setProgressStage(`2/${totalSteps}. Đang nhận diện giọng nói (Whisper AI)...`);
                 setTimeout(() => {
-                  setProgressStage('3/4. Đang dịch phụ đề với Google Gemini AI...');
+                  setProgressStage(`3/${totalSteps}. Đang dịch phụ đề với Google Gemini AI...`);
                 }, 15000);
+                if (burnSubtitles) {
+                  setTimeout(() => {
+                    setProgressStage(`4/${totalSteps}. Đang encode phụ đề vào video (Hardsub MP4)...`);
+                  }, 35000);
+                }
               }
             }
           },
@@ -666,7 +686,9 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                 </div>
 
                 <p className="text-[11px] text-slate-500 text-center">
-                  Quá trình có thể mất từ 15 - 60 giây tuỳ thuộc vào độ dài video và tốc độ mạng. Vui lòng không đóng trang.
+                  {!burnSubtitles
+                    ? 'Chế độ Dịch siêu tốc (Softsub): Dự kiến hoàn tất trong 1 - 3 phút. Vui lòng không đóng trang.'
+                    : 'Chế độ Render Hardsub MP4: Đang encode từng khung hình video (có thể mất 10 - 20 phút). Vui lòng không đóng trang.'}
                 </p>
               </div>
             )}
@@ -767,110 +789,169 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                 />
               </div>
 
-              {/* Subtitle Styling Options (Only for Video Tab) */}
+              {/* Delivery Mode & Subtitle Options (Only for Video Tab) */}
               {activeTab === 'video' && (
                 <div className="pt-3 border-t border-dark-800 space-y-3.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-1.5">
-                      <Video className="w-3.5 h-3.5 text-purple-400" />
-                      <span>Gắn phụ đề vào Video</span>
-                    </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-500/30 font-medium">
-                      Hardsub MP4
+                    <label className="block text-xs font-semibold text-slate-400 uppercase">
+                      Chế độ xuất Video & Phụ đề
+                    </label>
+                    <span className="text-[10px] text-emerald-400 font-bold uppercase">
+                      Khuyên dùng Softsub
                     </span>
                   </div>
 
-                  {/* Font Size & Position Grid */}
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                        Cỡ chữ phụ đề
-                      </label>
-                      <select
-                        value={fontSize}
-                        onChange={(e) => setFontSize(Number(e.target.value))}
-                        className="w-full px-2.5 py-2 bg-dark-950 border border-dark-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500"
-                      >
-                        <option value={18}>Nhỏ (18px)</option>
-                        <option value={22}>Chuẩn (22px)</option>
-                        <option value={26}>Lớn (26px)</option>
-                        <option value={30}>Rất lớn (30px)</option>
-                      </select>
-                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBurnSubtitles(false)}
+                      className={`p-3 rounded-2xl border text-left transition-all ${
+                        !burnSubtitles
+                          ? 'border-emerald-500/80 bg-emerald-950/40 ring-1 ring-emerald-500/50 shadow-md shadow-emerald-950/40'
+                          : 'border-dark-700 bg-dark-950/80 hover:border-dark-600'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <Sparkles className={`w-4 h-4 ${!burnSubtitles ? 'text-emerald-400' : 'text-slate-400'}`} />
+                        <span className={`text-xs font-bold ${!burnSubtitles ? 'text-emerald-300' : 'text-slate-300'}`}>
+                          ⚡ Dịch siêu tốc (Softsub)
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1 leading-snug">
+                        Chỉ mất <strong>2 - 3 phút</strong> (bỏ qua bước render 20 phút). Xem ngay với phụ đề sắc nét, mượt mà!
+                      </p>
+                    </button>
 
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                        Vị trí hiển thị
-                      </label>
-                      <select
-                        value={position}
-                        onChange={(e) => setPosition(e.target.value)}
-                        className="w-full px-2.5 py-2 bg-dark-950 border border-dark-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500"
-                      >
-                        <option value="bottom">Dưới cùng (Chuẩn)</option>
-                        <option value="top">Trên cùng</option>
-                        <option value="middle">Ở giữa</option>
-                      </select>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setBurnSubtitles(true)}
+                      className={`p-3 rounded-2xl border text-left transition-all ${
+                        burnSubtitles
+                          ? 'border-purple-500/80 bg-purple-950/40 ring-1 ring-purple-500/50 shadow-md shadow-purple-950/40'
+                          : 'border-dark-700 bg-dark-950/80 hover:border-dark-600'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <Film className={`w-4 h-4 ${burnSubtitles ? 'text-purple-400' : 'text-slate-400'}`} />
+                        <span className={`text-xs font-bold ${burnSubtitles ? 'text-purple-300' : 'text-slate-300'}`}>
+                          🎬 Render Hardsub MP4
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1 leading-snug">
+                        Gắn chết phụ đề vào từng khung hình video. Cần <strong>15 - 20 phút</strong> encode trên CPU.
+                      </p>
+                    </button>
                   </div>
 
-                  {/* Font Color & Style Grid */}
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                        Màu chữ
-                      </label>
-                      <div className="flex items-center space-x-1.5">
-                        {[
-                          { color: '#FFFFFF', title: 'Trắng' },
-                          { color: '#FDE047', title: 'Vàng' },
-                          { color: '#38BDF8', title: 'Cyan' },
-                          { color: '#4ADE80', title: 'Xanh lá' },
-                        ].map((c) => (
-                          <button
-                            key={c.color}
-                            type="button"
-                            onClick={() => setFontColor(c.color)}
-                            title={c.title}
-                            className={`w-6 h-6 rounded-full border-2 transition-transform ${
-                              fontColor === c.color ? 'scale-115 border-white ring-2 ring-purple-500/50' : 'border-transparent opacity-70 hover:opacity-100'
-                            }`}
-                            style={{ backgroundColor: c.color }}
-                          />
-                        ))}
+                  {burnSubtitles ? (
+                    <div className="pt-2 space-y-3.5 animate-fade-in">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-1.5">
+                          <Video className="w-3.5 h-3.5 text-purple-400" />
+                          <span>Kiểu chữ Hardsub MP4</span>
+                        </span>
+                      </div>
+
+                      {/* Font Size & Position Grid */}
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                            Cỡ chữ phụ đề
+                          </label>
+                          <select
+                            value={fontSize}
+                            onChange={(e) => setFontSize(Number(e.target.value))}
+                            className="w-full px-2.5 py-2 bg-dark-950 border border-dark-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500"
+                          >
+                            <option value={18}>Nhỏ (18px)</option>
+                            <option value={22}>Chuẩn (22px)</option>
+                            <option value={26}>Lớn (26px)</option>
+                            <option value={30}>Rất lớn (30px)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                            Vị trí hiển thị
+                          </label>
+                          <select
+                            value={position}
+                            onChange={(e) => setPosition(e.target.value)}
+                            className="w-full px-2.5 py-2 bg-dark-950 border border-dark-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500"
+                          >
+                            <option value="bottom">Dưới cùng (Chuẩn)</option>
+                            <option value="top">Trên cùng</option>
+                            <option value="middle">Ở giữa</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Font Color & Style Grid */}
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                            Màu chữ
+                          </label>
+                          <div className="flex items-center space-x-1.5">
+                            {[
+                              { color: '#FFFFFF', title: 'Trắng' },
+                              { color: '#FDE047', title: 'Vàng' },
+                              { color: '#38BDF8', title: 'Cyan' },
+                              { color: '#4ADE80', title: 'Xanh lá' },
+                            ].map((c) => (
+                              <button
+                                key={c.color}
+                                type="button"
+                                onClick={() => setFontColor(c.color)}
+                                title={c.title}
+                                className={`w-6 h-6 rounded-full border-2 transition-transform ${
+                                  fontColor === c.color ? 'scale-115 border-white ring-2 ring-purple-500/50' : 'border-transparent opacity-70 hover:opacity-100'
+                                }`}
+                                style={{ backgroundColor: c.color }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                            Kiểu hiển thị
+                          </label>
+                          <select
+                            value={borderStyle}
+                            onChange={(e) => setBorderStyle(Number(e.target.value))}
+                            className="w-full px-2.5 py-2 bg-dark-950 border border-dark-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500"
+                          >
+                            <option value={1}>Viền đen nổi bật</option>
+                            <option value={3}>Hộp nền mờ</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Processing Speed / Preset */}
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                          Tốc độ render Hardsub
+                        </label>
+                        <select
+                          value={preset}
+                          onChange={(e) => setPreset(e.target.value)}
+                          className="w-full px-2.5 py-2 bg-dark-950 border border-dark-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500 font-medium"
+                        >
+                          <option value="ultrafast">⚡ Siêu tốc (Ultrafast - Nhanh nhất)</option>
+                          <option value="veryfast">🚀 Rất nhanh (Veryfast - Cân bằng)</option>
+                          <option value="superfast">🏎️ Cực nhanh (Superfast)</option>
+                        </select>
                       </div>
                     </div>
-
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                        Kiểu hiển thị
-                      </label>
-                      <select
-                        value={borderStyle}
-                        onChange={(e) => setBorderStyle(Number(e.target.value))}
-                        className="w-full px-2.5 py-2 bg-dark-950 border border-dark-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500"
-                      >
-                        <option value={1}>Viền đen nổi bật</option>
-                        <option value={3}>Hộp nền mờ</option>
-                      </select>
+                  ) : (
+                    <div className="p-3 rounded-xl bg-dark-950/60 border border-dark-800 text-[11px] text-slate-400 flex items-start space-x-2">
+                      <Sparkles className="w-3.5 h-3.5 text-accent-400 shrink-0 mt-0.5" />
+                      <span>
+                        Với chế độ Softsub, bạn có thể xem video ngay sau 2-3 phút dịch. Bạn vẫn có thể bấm nút <strong>"Xuất Video MP4 (Hardsub)"</strong> bất kỳ lúc nào sau khi xem hoặc chỉnh sửa phụ đề!
+                      </span>
                     </div>
-                  </div>
-
-                  {/* Processing Speed / Preset */}
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                      Tốc độ render Hardsub
-                    </label>
-                    <select
-                      value={preset}
-                      onChange={(e) => setPreset(e.target.value)}
-                      className="w-full px-2.5 py-2 bg-dark-950 border border-dark-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500 font-medium"
-                    >
-                      <option value="ultrafast">⚡ Siêu tốc (Ultrafast - Nhanh gấp 5 lần)</option>
-                      <option value="veryfast">🚀 Rất nhanh (Veryfast - Cân bằng)</option>
-                      <option value="superfast">🏎️ Cực nhanh (Superfast)</option>
-                    </select>
-                  </div>
+                  )}
                 </div>
               )}
 

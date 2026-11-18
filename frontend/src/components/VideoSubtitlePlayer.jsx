@@ -62,44 +62,61 @@ export default function VideoSubtitlePlayer({
         </div>
 
         <div className="flex items-center space-x-2">
-          {subtitledVideoUrl && (
-            <div className="inline-flex rounded-lg bg-dark-950 p-0.5 border border-dark-700">
-              <button
-                onClick={() => setActiveSource('subtitled')}
-                className={`flex items-center space-x-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${
-                  activeSource === 'subtitled'
-                    ? 'bg-gradient-to-r from-purple-600 to-accent-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Video đã gắn sub</span>
-              </button>
+          {subtitledVideoUrl ? (
+            <>
+              <div className="inline-flex rounded-lg bg-dark-950 p-0.5 border border-dark-700">
+                <button
+                  onClick={() => setActiveSource('subtitled')}
+                  className={`flex items-center space-x-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                    activeSource === 'subtitled'
+                      ? 'bg-gradient-to-r from-purple-600 to-accent-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Video đã gắn sub</span>
+                </button>
 
-              <button
-                onClick={() => setActiveSource('raw')}
-                className={`flex items-center space-x-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${
-                  activeSource === 'raw'
-                    ? 'bg-dark-800 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Video className="w-3.5 h-3.5" />
-                <span>Video gốc</span>
-              </button>
-            </div>
-          )}
+                <button
+                  onClick={() => setActiveSource('raw')}
+                  className={`flex items-center space-x-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                    activeSource === 'raw'
+                      ? 'bg-dark-800 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Video className="w-3.5 h-3.5" />
+                  <span>Video gốc</span>
+                </button>
+              </div>
 
-          {subtitledVideoUrl && (
-            <a
-              href={subtitledVideoUrl}
-              download={downloadName}
-              className="flex items-center space-x-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all hover:scale-102"
-              title="Tải video MP4 đã gắn phụ đề trực tiếp"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Tải Video MP4</span>
-            </a>
+              <a
+                href={subtitledVideoUrl}
+                download={downloadName}
+                className="flex items-center space-x-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all hover:scale-102"
+                title="Tải video MP4 đã gắn phụ đề trực tiếp"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Tải Video MP4</span>
+              </a>
+            </>
+          ) : (
+            <>
+              <span className="hidden sm:inline-flex items-center space-x-1 text-[11px] font-semibold text-emerald-400 bg-emerald-950/40 border border-emerald-500/20 px-2.5 py-1 rounded-md">
+                <Sparkles className="w-3 h-3 text-emerald-400" />
+                <span>Softsub siêu tốc (Không độ trễ)</span>
+              </span>
+              {onOpenMp4Config && (
+                <button
+                  onClick={onOpenMp4Config}
+                  className="flex items-center space-x-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-purple-600 to-accent-600 hover:from-purple-500 hover:to-accent-500 text-white text-xs font-bold shadow-md shadow-purple-600/20 transition-all hover:scale-102"
+                  title="Ghi cứng phụ đề (Hardsub) và tải video MP4 về máy"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Xuất Video MP4 (Hardsub)</span>
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>

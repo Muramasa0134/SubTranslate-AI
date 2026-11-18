@@ -114,6 +114,7 @@ class TranslateVideoUrlRequest(BaseModel):
     whisper_model: Optional[str] = None
     translation_style: Optional[str] = "cinematic"
     context_hint: Optional[str] = None
+    burn_subtitles: bool = False
     font_size: int = 22
     font_color: str = "#FFFFFF"
     outline_color: str = "#000000"

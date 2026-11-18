@@ -62,6 +62,7 @@ export const translateVideoUrl = async ({
   translation_style,
   context_hint,
   whisper_model,
+  burn_subtitles = false,
   api_key,
   model_name,
   font_size,
@@ -80,6 +81,7 @@ export const translateVideoUrl = async ({
       translation_style,
       context_hint,
       whisper_model,
+      burn_subtitles,
       api_key,
       model_name,
       font_size,
@@ -102,6 +104,7 @@ export const translateVideoFile = async ({
   target_language,
   translation_style,
   context_hint,
+  burn_subtitles = false,
   api_key,
   font_size,
   font_color,
@@ -117,6 +120,7 @@ export const translateVideoFile = async ({
   formData.append('target_language', target_language);
   if (translation_style) formData.append('translation_style', translation_style);
   if (context_hint) formData.append('context_hint', context_hint);
+  formData.append('burn_subtitles', burn_subtitles ? 'true' : 'false');
   if (preset) formData.append('preset', preset);
   if (api_key) {
     formData.append('api_key', api_key);

@@ -123,7 +123,7 @@ class DownloadService:
             raise RuntimeError(format_download_error(e, clean_url))
 
     @staticmethod
-    def download_video(url: str, output_mp4_path: Path, max_height: int = 1080) -> Dict[str, Any]:
+    def download_video(url: str, output_mp4_path: Path, max_height: int = 720) -> Dict[str, Any]:
         """
         Downloads video and merges to a standard MP4 file at output_mp4_path.
         Returns metadata dictionary.

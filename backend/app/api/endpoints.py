@@ -302,26 +302,29 @@ async def translate_video_from_url(
             except Exception:
                 pass
 
-        # Step 5: Burn subtitles directly into video (Hardsub MP4)
+        # Step 5: Burn subtitles directly into video (Hardsub MP4) if requested
         subtitled_filename = f"{job_id}_subtitled.mp4"
         subtitled_save_path = settings.UPLOADS_DIR / subtitled_filename
         subtitled_video_url = None
 
-        try:
-            VideoService.burn_subtitles_to_mp4(
-                input_video_path=video_save_path,
-                srt_content=translated_srt,
-                output_mp4_path=subtitled_save_path,
-                font_size=payload.font_size,
-                font_color=payload.font_color,
-                outline_color=payload.outline_color,
-                border_style=payload.border_style,
-                position=payload.position,
-                preset=payload.preset
-            )
-            subtitled_video_url = f"/storage/uploads/{subtitled_filename}"
-        except Exception as burn_err:
-            logger.warning(f"Could not automatically burn subtitles to MP4: {burn_err}")
+        if payload.burn_subtitles:
+            try:
+                VideoService.burn_subtitles_to_mp4(
+                    input_video_path=video_save_path,
+                    srt_content=translated_srt,
+                    output_mp4_path=subtitled_save_path,
+                    font_size=payload.font_size,
+                    font_color=payload.font_color,
+                    outline_color=payload.outline_color,
+                    border_style=payload.border_style,
+                    position=payload.position,
+                    preset=payload.preset
+                )
+                subtitled_video_url = f"/storage/uploads/{subtitled_filename}"
+            except Exception as burn_err:
+                logger.warning(f"Could not automatically burn subtitles to MP4: {burn_err}")
+        else:
+            logger.info("Fast Softsub Mode: skipped synchronous FFmpeg hardsub re-encoding. Video ready in softsub overlay!")
 
         # Update History
         HistoryService.update_record(
@@ -371,6 +374,7 @@ async def translate_video(
     whisper_model: Optional[str] = Form(None),
     translation_style: str = Form("cinematic"),
     context_hint: Optional[str] = Form(None),
+    burn_subtitles: bool = Form(False),
     font_size: int = Form(22),
     font_color: str = Form("#FFFFFF"),
     outline_color: str = Form("#000000"),
@@ -481,26 +485,29 @@ async def translate_video(
             except Exception:
                 pass
 
-        # Step 5: Burn subtitles directly into video (Hardsub MP4)
+        # Step 5: Burn subtitles directly into video (Hardsub MP4) if requested
         subtitled_filename = f"{job_id}_subtitled.mp4"
         subtitled_save_path = settings.UPLOADS_DIR / subtitled_filename
         subtitled_video_url = None
 
-        try:
-            VideoService.burn_subtitles_to_mp4(
-                input_video_path=video_save_path,
-                srt_content=translated_srt,
-                output_mp4_path=subtitled_save_path,
-                font_size=font_size,
-                font_color=font_color,
-                outline_color=outline_color,
-                border_style=border_style,
-                position=position,
-                preset=preset
-            )
-            subtitled_video_url = f"/storage/uploads/{subtitled_filename}"
-        except Exception as burn_err:
-            logger.warning(f"Could not automatically burn subtitles to MP4: {burn_err}")
+        if burn_subtitles:
+            try:
+                VideoService.burn_subtitles_to_mp4(
+                    input_video_path=video_save_path,
+                    srt_content=translated_srt,
+                    output_mp4_path=subtitled_save_path,
+                    font_size=font_size,
+                    font_color=font_color,
+                    outline_color=outline_color,
+                    border_style=border_style,
+                    position=position,
+                    preset=preset
+                )
+                subtitled_video_url = f"/storage/uploads/{subtitled_filename}"
+            except Exception as burn_err:
+                logger.warning(f"Could not automatically burn subtitles to MP4: {burn_err}")
+        else:
+            logger.info("Fast Softsub Mode: skipped synchronous FFmpeg hardsub re-encoding. Video ready in softsub overlay!")
 
         # Update History
         HistoryService.update_record(
