@@ -1,7 +1,10 @@
 import axios from 'axios';
 
+// Support custom backend API URL when deployed on Vercel or external host
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
