@@ -17,6 +17,18 @@ services:
         value: cpu
       - key: WHISPER_COMPUTE_TYPE
         value: int8
+      - key: MKL_DISABLE_FAST_MM
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: CT2_PACKED_GEMM
+        value: "0"
+      - key: MKL_DYNAMIC
+        value: "FALSE"
+      - key: KMP_DUPLICATE_LIB_OK
+        value: "TRUE"
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
