@@ -69,7 +69,11 @@ Priority:
 ## Frontend
 - **Framework**: React 18
 - **Build Tool**: Vite 6
-- **Styling**: TailwindCSS (Dark mode / Cyberpunk theme with cyan & purple accents)
+- **Design System & Skill**: Integrated with `taste-skill` (`Leonxlnx/taste-skill` anti-slop frontend guidelines)
+  - Selected Theme: `blue-black-cornflower` ("Night and sky blue", `#0a0d14` background, `#131824` surface, `#5ab9fc` Sky Blue accent)
+  - Typography: `Geist` + `Geist Mono` / `Inter` with tight tracking (`-0.025em`)
+  - Micro-interactions: Tactile button steps on hover (`active:scale-[0.98]`), high-contrast subtitle overlays, glass panels
+- **Styling**: TailwindCSS 3
 - **Icons**: `lucide-react`
 - **Routing**: `react-router-dom` v6
 - **HTTP Client**: Axios with baseURL `/api`

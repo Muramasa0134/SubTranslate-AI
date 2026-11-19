@@ -177,6 +177,10 @@ Browser Tab Audio
 
 ## Frontend
 - **Framework**: React 18.3, Vite 6
+- **Design System & Taste Skill**: `Leonxlnx/taste-skill` v2.5 (`.agents/skills/design-taste-frontend`)
+  - Palette: `blue-black-cornflower` ("Night and sky blue", `#0a0d14` background, `#131824` surface, `#5ab9fc` Sky Blue accent)
+  - Typography: `Geist` & `Geist Mono` / `Inter` with tight `-0.025em` tracking
+  - Micro-interactions: Tactile button steps on hover (`active:scale-[0.98]`), high-contrast subtitle overlays
 - **CSS**: TailwindCSS 3.4
 - **Icons**: `lucide-react`
 - **Routing**: `react-router-dom` 6.28

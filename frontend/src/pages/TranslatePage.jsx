@@ -377,16 +377,16 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
 
         {/* Tab switch buttons */}
         {!resultData && (
-          <div className="inline-flex p-1 rounded-xl bg-dark-900 border border-dark-700 self-start">
+          <div className="inline-flex p-1 rounded-xl bg-taste-surface border border-taste-border self-start">
             <button
               onClick={() => {
                 setActiveTab('video');
                 resetAll();
               }}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all taste-button ${
                 activeTab === 'video'
-                  ? 'bg-gradient-to-r from-purple-600 to-accent-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-taste-accent text-taste-accentInk shadow-taste-accent'
+                  : 'text-taste-muted hover:text-taste-ink'
               }`}
             >
               <Video className="w-4 h-4" />
@@ -397,10 +397,10 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                 setActiveTab('srt');
                 resetAll();
               }}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all taste-button ${
                 activeTab === 'srt'
-                  ? 'bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-taste-accent text-taste-accentInk shadow-taste-accent'
+                  : 'text-taste-muted hover:text-taste-ink'
               }`}
             >
               <Subtitles className="w-4 h-4" />
@@ -418,15 +418,15 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
             
             {/* If Video Tab and URL Mode: Primary Clean Paste Box */}
             {activeTab === 'video' && videoInputMode === 'url' && (
-              <div className="p-6 sm:p-8 rounded-3xl bg-dark-900 border border-dark-700 shadow-xl space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-dark-800">
+              <div className="p-6 sm:p-8 rounded-3xl bg-taste-surface border border-taste-border shadow-taste-card space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-taste-border">
                   <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-600/30 to-accent-600/30 border border-purple-500/40 flex items-center justify-center text-accent-400">
+                    <div className="w-10 h-10 rounded-xl bg-taste-card border border-taste-border flex items-center justify-center text-taste-accent shadow-sm">
                       <LinkIcon className="w-5 h-5" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-white">Dán Link Video để Dịch Tự Động</h3>
-                      <p className="text-xs text-slate-400">Không cần tải file về máy – AI sẽ tự động phân tích và dịch trực tiếp</p>
+                      <h3 className="text-sm font-bold text-taste-ink">Dán Link Video để Dịch Tự Động</h3>
+                      <p className="text-xs text-taste-muted">Không cần tải file về máy – AI sẽ tự động phân tích và dịch trực tiếp</p>
                     </div>
                   </div>
 
@@ -436,21 +436,21 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                       setVideoInputMode('file');
                       setErrorMsg('');
                     }}
-                    className="text-[11px] font-semibold text-slate-400 hover:text-accent-400 flex items-center space-x-1.5 self-start sm:self-auto px-3 py-1.5 rounded-lg bg-dark-800/90 hover:bg-dark-800 border border-dark-700 transition-colors"
+                    className="taste-button text-[11px] font-semibold text-taste-muted hover:text-taste-ink flex items-center space-x-1.5 self-start sm:self-auto px-3 py-1.5 rounded-lg bg-taste-card hover:bg-taste-hover border border-taste-border transition-colors"
                   >
-                    <Upload className="w-3.5 h-3.5" />
+                    <Upload className="w-3.5 h-3.5 text-taste-accent" />
                     <span>Hoặc tải file từ máy tính</span>
                   </button>
                 </div>
 
                 {/* URL Input Bar */}
                 <div className="space-y-2">
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                  <label className="block text-xs font-semibold text-taste-muted uppercase tracking-wider">
                     Đường dẫn video (URL)
                   </label>
                   <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
-                      <Globe className="w-5 h-5 text-accent-400" />
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-taste-muted">
+                      <Globe className="w-5 h-5 text-taste-accent" />
                     </div>
                     <input
                       type="url"
@@ -463,7 +463,7 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                         }
                       }}
                       placeholder="Dán link YouTube, TikTok, Facebook, MP4 URL..."
-                      className="w-full pl-12 pr-32 py-4 bg-dark-950 border-2 border-dark-700 focus:border-accent-500 rounded-2xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none transition-all font-mono"
+                      className="w-full pl-12 pr-32 py-4 bg-taste-bg border border-taste-border focus:border-taste-accent focus:ring-1 focus:ring-taste-accent rounded-2xl text-xs sm:text-sm text-taste-ink placeholder-taste-muted/50 focus:outline-none transition-all font-mono"
                     />
                     <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center space-x-1.5">
                       {videoUrl && (
@@ -805,19 +805,19 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                     <button
                       type="button"
                       onClick={() => setBurnSubtitles(false)}
-                      className={`p-3 rounded-2xl border text-left transition-all ${
+                      className={`taste-button p-3 rounded-2xl border text-left transition-all ${
                         !burnSubtitles
-                          ? 'border-emerald-500/80 bg-emerald-950/40 ring-1 ring-emerald-500/50 shadow-md shadow-emerald-950/40'
-                          : 'border-dark-700 bg-dark-950/80 hover:border-dark-600'
+                          ? 'border-taste-accent bg-taste-card ring-1 ring-taste-accent/40 shadow-sm'
+                          : 'border-taste-border bg-taste-bg hover:border-taste-borderLight'
                       }`}
                     >
                       <div className="flex items-center space-x-2">
-                        <Sparkles className={`w-4 h-4 ${!burnSubtitles ? 'text-emerald-400' : 'text-slate-400'}`} />
-                        <span className={`text-xs font-bold ${!burnSubtitles ? 'text-emerald-300' : 'text-slate-300'}`}>
+                        <Sparkles className={`w-4 h-4 ${!burnSubtitles ? 'text-taste-accent' : 'text-taste-muted'}`} />
+                        <span className={`text-xs font-bold ${!burnSubtitles ? 'text-taste-ink' : 'text-taste-muted'}`}>
                           ⚡ Dịch siêu tốc (Softsub)
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400 mt-1 leading-snug">
+                      <p className="text-[11px] text-taste-muted mt-1 leading-snug">
                         Chỉ mất <strong>2 - 3 phút</strong> (bỏ qua bước render 20 phút). Xem ngay với phụ đề sắc nét, mượt mà!
                       </p>
                     </button>
@@ -825,19 +825,19 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
                     <button
                       type="button"
                       onClick={() => setBurnSubtitles(true)}
-                      className={`p-3 rounded-2xl border text-left transition-all ${
+                      className={`taste-button p-3 rounded-2xl border text-left transition-all ${
                         burnSubtitles
-                          ? 'border-purple-500/80 bg-purple-950/40 ring-1 ring-purple-500/50 shadow-md shadow-purple-950/40'
-                          : 'border-dark-700 bg-dark-950/80 hover:border-dark-600'
+                          ? 'border-taste-accent bg-taste-card ring-1 ring-taste-accent/40 shadow-sm'
+                          : 'border-taste-border bg-taste-bg hover:border-taste-borderLight'
                       }`}
                     >
                       <div className="flex items-center space-x-2">
-                        <Film className={`w-4 h-4 ${burnSubtitles ? 'text-purple-400' : 'text-slate-400'}`} />
-                        <span className={`text-xs font-bold ${burnSubtitles ? 'text-purple-300' : 'text-slate-300'}`}>
+                        <Film className={`w-4 h-4 ${burnSubtitles ? 'text-taste-accent' : 'text-taste-muted'}`} />
+                        <span className={`text-xs font-bold ${burnSubtitles ? 'text-taste-ink' : 'text-taste-muted'}`}>
                           🎬 Render Hardsub MP4
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400 mt-1 leading-snug">
+                      <p className="text-[11px] text-taste-muted mt-1 leading-snug">
                         Gắn chết phụ đề vào từng khung hình video. Cần <strong>15 - 20 phút</strong> encode trên CPU.
                       </p>
                     </button>
@@ -978,16 +978,16 @@ export default function TranslatePage({ config, onOpenKeyModal }) {
               <button
                 onClick={handleTranslate}
                 disabled={isSubmitDisabled}
-                className="w-full py-3.5 rounded-xl font-bold text-xs bg-gradient-to-r from-primary-600 via-primary-500 to-accent-600 hover:from-primary-500 hover:to-accent-500 text-white shadow-lg shadow-primary-600/25 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-all hover:scale-[1.01]"
+                className="taste-button w-full py-3.5 rounded-xl font-bold text-xs bg-taste-accent text-taste-accentInk hover:bg-taste-accentHover shadow-taste-accent disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-all"
               >
                 {processing ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin text-taste-accentInk" />
                     <span>Đang dịch AI...</span>
                   </>
                 ) : (
                   <>
-                    <Sparkles className="w-4 h-4" />
+                    <Sparkles className="w-4 h-4 text-taste-accentInk" />
                     <span>
                       {activeTab === 'srt'
                         ? 'Bắt đầu dịch file SRT'

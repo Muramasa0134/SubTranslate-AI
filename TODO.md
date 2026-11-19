@@ -23,6 +23,7 @@ Build a portfolio-grade, high-performance AI Video & Subtitle Translation platfo
 | **Sprint 5** | Video URL Translation (`yt-dlp`) & DRM Handling | `Completed` |
 | **Sprint 6** | Silero VAD Tuning & Intel MKL Memory Allocation Fixes | `Completed` |
 | **Sprint 7** | Long Video Speed Optimization (Softsub & Parallel Gemini) | `Completed` |
+| **Sprint 7.5** | Taste Skill Integration & Visual Polish (`blue-black-cornflower`) | `Completed` |
 | **Sprint 8** | Advanced Subtitle Export (.ASS, .VTT, Dual-SRT) | `Pending` |
 | **Sprint 9** | Batch Processing & Translation Queue Management | `Pending` |
 | **Sprint 10** | Dockerization & GPU Acceleration Setup | `Pending` |
@@ -120,7 +121,18 @@ Status: `Completed`
 
 ---
 
-## Sprint 8 - Enhanced Subtitle Styling & Export Formats (Next)
+## Sprint 7.5 - Taste Skill Visual Polish & Design System
+Status: `Completed`
+
+- [x] Clone and integrate `taste-skill` library into `.agents/skills/design-taste-frontend/`.
+- [x] Select theme tailored for AI/Developer Tools: `blue-black-cornflower` (`bg=#0a0d14`, `surface=#131824`, `accent=#5ab9fc`).
+- [x] Adopt modern Neo-Grotesk typography pairing: `Geist` + `Geist Mono` with tightened letter-spacing (`-0.015em` / `-0.025em`).
+- [x] Update `tailwind.config.js` with semantic `taste.*` tokens and backwards-compatible remapping.
+- [x] Overhaul base styles in `index.css`: tactile micro-interactions (`active:scale-[0.98]`), custom scrollbars, subtle ambient glows.
+- [x] Re-theme core components: `Navbar.jsx`, `Home.jsx`, `TranslatePage.jsx`, and `VideoSubtitlePlayer.jsx`.
+- [x] Verify production build passes with 0 errors (`npm run build`).
+
+---
 Status: `Pending`
 
 - [ ] Implement `.ass` (Advanced SubStation Alpha) export with karaoke and custom typography styles.

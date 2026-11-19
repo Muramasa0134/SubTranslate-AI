@@ -26,19 +26,19 @@ export default function Navbar({ config, onOpenKeyModal }) {
   const hasKey = config?.has_gemini_api_key;
 
   return (
-    <header className="sticky top-0 z-50 glass-panel border-b border-dark-700/60 bg-dark-950/80 backdrop-blur-md">
+    <header className="sticky top-0 z-50 glass-panel border-b border-taste-border bg-taste-bg/85 backdrop-blur-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Brand Logo */}
         <Link to="/" className="flex items-center space-x-3 group">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary-600 via-primary-500 to-accent-500 flex items-center justify-center shadow-lg shadow-primary-500/20 group-hover:scale-105 transition-transform duration-200">
-            <Subtitles className="w-5 h-5 text-white" />
+          <div className="w-10 h-10 rounded-xl bg-taste-accent text-taste-accentInk flex items-center justify-center shadow-taste-accent group-hover:scale-105 transition-transform duration-150">
+            <Subtitles className="w-5 h-5 font-black" />
           </div>
           <div>
             <div className="flex items-center space-x-1.5">
-              <span className="font-extrabold text-lg text-white tracking-tight">SubTranslate</span>
-              <span className="text-xs px-1.5 py-0.5 rounded bg-accent-500/20 text-accent-400 font-bold border border-accent-500/30">AI</span>
+              <span className="font-extrabold text-lg text-taste-ink tracking-tight">SubTranslate</span>
+              <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-taste-accent/15 text-taste-accent font-bold border border-taste-accent/30">AI</span>
             </div>
-            <p className="text-[10px] text-slate-400 font-medium">Whisper & Gemini Subtitles</p>
+            <p className="text-[10px] text-taste-muted font-medium">Whisper & Gemini Subtitles</p>
           </div>
         </Link>
 
@@ -51,13 +51,13 @@ export default function Navbar({ config, onOpenKeyModal }) {
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all duration-150 taste-button ${
                   isActive
-                    ? 'bg-primary-600/20 text-accent-400 border border-primary-500/30 shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-dark-800'
+                    ? 'bg-taste-card text-taste-accent border border-taste-borderLight shadow-sm'
+                    : 'text-taste-muted hover:text-taste-ink hover:bg-taste-surface'
                 }`}
               >
-                <Icon className={`w-4 h-4 ${item.isLive ? 'text-red-400 animate-pulse' : isActive ? 'text-accent-400' : 'text-slate-400'}`} />
+                <Icon className={`w-4 h-4 ${item.isLive ? 'text-red-400 animate-pulse' : isActive ? 'text-taste-accent' : 'text-taste-muted'}`} />
                 <span>{item.name}</span>
                 {item.isLive && (
                   <span className="text-[9px] px-1.5 py-0.2 rounded-full font-extrabold uppercase bg-red-500/20 text-red-400 border border-red-500/30">
@@ -73,7 +73,7 @@ export default function Navbar({ config, onOpenKeyModal }) {
         <div className="flex items-center space-x-3">
           <button
             onClick={onOpenKeyModal}
-            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all taste-button ${
               hasKey
                 ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400 hover:bg-emerald-900/40'
                 : 'bg-amber-950/40 border-amber-500/40 text-amber-300 hover:bg-amber-900/40 animate-pulse'
@@ -93,7 +93,7 @@ export default function Navbar({ config, onOpenKeyModal }) {
 
           <Link
             to="/translate"
-            className="hidden sm:inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-primary-600 to-accent-600 hover:from-primary-500 hover:to-accent-500 text-white shadow-md shadow-primary-600/20 transition-all hover:scale-102"
+            className="hidden sm:inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-taste-accent text-taste-accentInk hover:bg-taste-accentHover shadow-taste-accent transition-all taste-button"
           >
             <Languages className="w-3.5 h-3.5" />
             <span>New Translation</span>

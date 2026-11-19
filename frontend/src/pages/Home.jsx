@@ -74,48 +74,47 @@ export default function Home({ config, onOpenKeyModal }) {
     <div className="space-y-20 pb-16">
       {/* Hero Section */}
       <section className="relative pt-12 md:pt-20 overflow-hidden text-center">
-        {/* Glow ambient background */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[350px] bg-gradient-to-tr from-primary-600/20 via-accent-500/20 to-purple-600/10 blur-[120px] rounded-full pointer-events-none -z-10" />
+        {/* Subtle night ambient glow */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[550px] h-[300px] bg-taste-accent/10 blur-[130px] rounded-full pointer-events-none -z-10" />
 
         <div className="max-w-4xl mx-auto px-4">
-          <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-dark-900 border border-dark-700/80 text-xs font-semibold text-accent-400 mb-6 shadow-sm">
-            <Sparkles className="w-3.5 h-3.5" />
+          <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-taste-surface border border-taste-border text-xs font-semibold text-taste-accent mb-6 shadow-sm">
+            <Sparkles className="w-3.5 h-3.5 text-taste-accent" />
             <span>AI-Powered Video & Subtitle Translation Platform</span>
           </div>
 
-          <h1 className="text-4xl sm:text-5xl md:text-6xl font-black text-white tracking-tight leading-tight">
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-black text-taste-ink tracking-tight leading-tight">
             Dịch phụ đề Video thông minh với{' '}
-            <span className="bg-gradient-to-r from-primary-400 via-accent-400 to-indigo-300 bg-clip-text text-transparent">
+            <span className="text-taste-accent">
               Gemini & Whisper AI
             </span>
           </h1>
 
-          <p className="mt-6 text-base sm:text-lg text-slate-300 max-w-2xl mx-auto leading-relaxed">
-            Dán link video trực tiếp từ <strong>YouTube, TikTok, Facebook, MP4 URL</strong> hoặc tải file lên. AI sẽ tự động trích xuất âm thanh, nhận diện phụ đề Whisper và chuyển ngữ với Google Gemini.
+          <p className="mt-6 text-base sm:text-lg text-taste-muted max-w-2xl mx-auto leading-relaxed">
+            Dán link video từ <strong>YouTube, TikTok, Facebook, MP4 URL</strong> hoặc tải file lên. AI tự động trích xuất âm thanh, nhận diện tiếng nói và chuyển ngữ với Google Gemini.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link
-              to="/live-widget"
-              className="px-6 py-3.5 rounded-xl font-bold text-sm bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white shadow-lg shadow-emerald-500/25 flex items-center space-x-2 transition-all hover:scale-105"
+              to="/translate?tab=video"
+              className="taste-button px-6 py-3.5 rounded-xl font-bold text-sm bg-taste-accent text-taste-accentInk hover:bg-taste-accentHover shadow-taste-accent flex items-center space-x-2"
             >
-              <Radio className="w-4 h-4 animate-pulse" />
-              <span>Mở Live Subtitle Widget (Mới)</span>
+              <Video className="w-4 h-4" />
+              <span>Dịch từ Link Video</span>
               <ArrowRight className="w-4 h-4" />
             </Link>
 
             <Link
-              to="/translate?tab=video"
-              className="px-6 py-3.5 rounded-xl font-bold text-sm bg-gradient-to-r from-purple-600 via-purple-500 to-pink-500 hover:from-purple-500 hover:to-pink-400 text-white shadow-lg shadow-purple-600/25 flex items-center space-x-2 transition-all hover:scale-105"
+              to="/live-widget"
+              className="taste-button px-6 py-3.5 rounded-xl font-semibold text-sm bg-taste-card text-taste-ink hover:bg-taste-hover border border-taste-border flex items-center space-x-2"
             >
-              <Video className="w-4 h-4" />
-              <span>Dịch từ Video</span>
-              <ArrowRight className="w-4 h-4" />
+              <Radio className="w-4 h-4 text-rose-400 animate-pulse" />
+              <span>Live Subtitle Widget</span>
             </Link>
 
             <Link
               to="/dashboard"
-              className="px-6 py-3.5 rounded-xl font-semibold text-sm bg-dark-900 hover:bg-dark-800 border border-dark-700 text-slate-200 transition-colors"
+              className="taste-button px-6 py-3.5 rounded-xl font-semibold text-sm bg-taste-surface hover:bg-taste-hover border border-taste-border text-taste-muted hover:text-taste-ink transition-colors"
             >
               Xem Dashboard
             </Link>
@@ -123,7 +122,7 @@ export default function Home({ config, onOpenKeyModal }) {
             {!config?.has_gemini_api_key && (
               <button
                 onClick={onOpenKeyModal}
-                className="px-4 py-3.5 rounded-xl font-semibold text-xs bg-amber-950/40 hover:bg-amber-900/40 border border-amber-500/40 text-amber-300 transition-colors flex items-center space-x-1.5"
+                className="taste-button px-4 py-3.5 rounded-xl font-semibold text-xs bg-amber-950/40 hover:bg-amber-900/40 border border-amber-500/40 text-amber-300 transition-colors flex items-center space-x-1.5"
               >
                 <Zap className="w-3.5 h-3.5 text-amber-400" />
                 <span>Cấu hình Gemini API Key</span>
@@ -136,33 +135,33 @@ export default function Home({ config, onOpenKeyModal }) {
       {/* AI Pipeline Architecture Showcase */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-12">
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-taste-ink tracking-tight">
             Quy trình xử lý AI khép kín
           </h2>
-          <p className="text-xs sm:text-sm text-slate-400 mt-2">
-            Từ file gốc đến phụ đề chất lượng cao chỉ qua 4 giai đoạn tự động
+          <p className="text-xs sm:text-sm text-taste-muted mt-2">
+            Từ liên kết video đến phụ đề hoàn chỉnh chỉ qua 4 giai đoạn tự động
           </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {steps.map((step, idx) => {
+          {steps.map((step) => {
             const Icon = step.icon;
             return (
               <div
                 key={step.num}
-                className="relative p-6 rounded-2xl bg-dark-900 border border-dark-700/80 hover:border-accent-500/40 transition-all group flex flex-col justify-between"
+                className="taste-card p-6 flex flex-col justify-between hover:border-taste-borderLight transition-all group"
               >
                 <div>
                   <div className="flex items-center justify-between mb-4">
-                    <div className={`w-12 h-12 rounded-xl bg-gradient-to-tr ${step.accent} flex items-center justify-center shadow-md shadow-primary-500/20 group-hover:scale-110 transition-transform`}>
-                      <Icon className="w-6 h-6 text-white" />
+                    <div className="w-12 h-12 rounded-xl bg-taste-card border border-taste-border flex items-center justify-center text-taste-accent group-hover:scale-105 transition-transform">
+                      <Icon className="w-6 h-6" />
                     </div>
-                    <span className="font-mono text-2xl font-black text-dark-700 group-hover:text-accent-400 transition-colors">
+                    <span className="font-mono text-2xl font-black text-taste-muted/30 group-hover:text-taste-accent transition-colors">
                       {step.num}
                     </span>
                   </div>
-                  <h3 className="text-base font-bold text-white mb-2">{step.title}</h3>
-                  <p className="text-xs text-slate-400 leading-relaxed">{step.desc}</p>
+                  <h3 className="text-base font-bold text-taste-ink mb-2">{step.title}</h3>
+                  <p className="text-xs text-taste-muted leading-relaxed">{step.desc}</p>
                 </div>
               </div>
             );
@@ -172,18 +171,18 @@ export default function Home({ config, onOpenKeyModal }) {
 
       {/* Core Features Cards */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="p-8 md:p-12 rounded-3xl bg-dark-900/60 border border-dark-800 relative overflow-hidden">
+        <div className="p-8 md:p-12 rounded-3xl bg-taste-surface border border-taste-border relative overflow-hidden">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {features.map((feat) => {
               const Icon = feat.icon;
               return (
                 <div key={feat.title} className="flex items-start space-x-4">
-                  <div className="p-3 rounded-xl bg-primary-600/20 border border-primary-500/30 text-accent-400 shrink-0">
+                  <div className="p-3 rounded-xl bg-taste-card border border-taste-border text-taste-accent shrink-0">
                     <Icon className="w-6 h-6" />
                   </div>
                   <div>
-                    <h4 className="text-base font-bold text-white mb-1.5">{feat.title}</h4>
-                    <p className="text-xs text-slate-400 leading-relaxed">{feat.desc}</p>
+                    <h4 className="text-base font-bold text-taste-ink mb-1.5">{feat.title}</h4>
+                    <p className="text-xs text-taste-muted leading-relaxed">{feat.desc}</p>
                   </div>
                 </div>
               );
@@ -194,24 +193,24 @@ export default function Home({ config, onOpenKeyModal }) {
 
       {/* Tech Stack Footer Bar */}
       <section className="max-w-7xl mx-auto px-4 text-center">
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">
+        <p className="text-xs font-semibold text-taste-muted/60 uppercase tracking-wider mb-4">
           Công nghệ triển khai cốt lõi
         </p>
-        <div className="flex flex-wrap items-center justify-center gap-3">
+        <div className="flex flex-wrap items-center justify-center gap-2.5">
           {[
-            'Python 3.14',
+            'Python 3.12+',
             'FastAPI',
             'Google Gemini API',
             'faster-whisper',
             'FFmpeg Engine',
             'pysubs2',
             'SQLite / SQLAlchemy',
-            'React + Vite',
+            'React 18 + Vite 6',
             'Tailwind CSS',
           ].map((tech) => (
             <span
               key={tech}
-              className="px-3 py-1.5 rounded-lg bg-dark-900 border border-dark-800 text-xs font-mono text-slate-300"
+              className="px-3 py-1.5 rounded-lg bg-taste-surface border border-taste-border text-xs font-mono text-taste-muted"
             >
               {tech}
             </span>

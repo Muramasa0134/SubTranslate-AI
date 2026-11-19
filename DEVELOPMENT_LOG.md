@@ -146,6 +146,21 @@ Tasks:
 
 ---
 
+## M6.5 - Taste Skill Integration & Visual Polish
+Status: `Completed`
+
+Goal: Integrate `taste-skill` (`Leonxlnx/taste-skill`) anti-slop frontend guidelines and apply a studio-grade theme tailored for SubTranslate AI.
+
+Tasks:
+- [x] Downloaded and installed `taste-skill` into `.agents/skills/design-taste-frontend` and `.agents/skills/taste-skill`.
+- [x] Analyzed library palettes (`library/palettes.json`) and typography pairings (`library/type.json`).
+- [x] Selected the **`blue-black-cornflower`** ("Night and sky blue") theme: Deep night ground (`#0a0d14`), elevated slate surfaces (`#131824`), crisp silver-white text (`#e9edf3`), and a high-contrast Sky Blue accent (`#5ab9fc`).
+- [x] Paired with `Geist` and `Geist Mono` typography (`-0.025em` tracking for headlines, clean mono for timecodes).
+- [x] Replaced generic AI-slop gradients in `Navbar.jsx`, `Home.jsx`, and `TranslatePage.jsx` with purposeful high-contrast visual hierarchy and tactile micro-interactions (`active:scale-[0.98]`).
+- [x] Upgraded `VideoSubtitlePlayer` subtitle overlay with high-contrast translucent dark backdrop (`#0a0d14/90` with blur).
+
+---
+
 ## M7 - Enhanced Subtitle Features & Export Formats (Upcoming)
 Status: `Pending`
 
@@ -200,6 +215,11 @@ Tasks:
 - **Date**: 2026-11-18
 - **Decision**: Add automatic non-VAD fallback when Voice Activity Detection returns zero segments.
 - **Reason**: Music videos, rock songs, and action scenes with loud background music caused Silero VAD to filter out spoken dialogue. Re-running with `vad_filter=False` cleanly recovers 100% of missed lyrics and speech.
+
+## Decision 009
+- **Date**: 2026-11-19
+- **Decision**: Integrate `taste-skill` and apply the `blue-black-cornflower` ("Night and sky blue") palette.
+- **Reason**: SubTranslate AI is a multimedia AI developer tool. Generic multi-gradient templates ("AI slop") distract from video content and lower perceived quality. The `blue-black-cornflower` theme (deep night `#0a0d14`, slate panels `#131824`, Sky Blue accent `#5ab9fc`) with `Geist` typography provides clean visual hierarchy, tactile button micro-interactions, and 100% legible subtitle overlays.
 
 ---
 

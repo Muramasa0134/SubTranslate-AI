@@ -1,30 +1,32 @@
 import React from 'react';
-import { Subtitles, Sparkles, Code2, Heart } from 'lucide-react';
+import { Subtitles, Sparkles, Code2 } from 'lucide-react';
 
 export default function Footer() {
   return (
-    <footer className="border-t border-dark-800 bg-dark-950/80 text-slate-400 py-8 mt-auto">
+    <footer className="border-t border-taste-border bg-taste-surface/80 backdrop-blur-md text-taste-muted py-8 mt-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
         <div className="flex items-center space-x-2">
-          <Subtitles className="w-5 h-5 text-accent-400" />
-          <span className="text-sm font-semibold text-slate-200">SubTranslate AI</span>
-          <span className="text-xs text-slate-500">— Video & Subtitle Translation System</span>
+          <div className="w-6 h-6 rounded bg-taste-accent flex items-center justify-center">
+            <Subtitles className="w-3.5 h-3.5 text-taste-accentInk" />
+          </div>
+          <span className="text-sm font-semibold text-taste-ink">SubTranslate AI</span>
+          <span className="text-xs text-taste-muted">— Video & Subtitle Translation System</span>
         </div>
 
         <div className="flex items-center space-x-4 text-xs">
-          <span className="flex items-center space-x-1">
-            <Sparkles className="w-3.5 h-3.5 text-accent-400" />
+          <span className="flex items-center space-x-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-taste-accent" />
             <span>Powered by Google Gemini & faster-whisper</span>
           </span>
-          <span className="text-dark-700">•</span>
-          <span className="flex items-center space-x-1">
-            <Code2 className="w-3.5 h-3.5 text-primary-400" />
-            <span>AI Intern Portfolio Project</span>
+          <span className="text-taste-border">•</span>
+          <span className="flex items-center space-x-1.5">
+            <Code2 className="w-3.5 h-3.5 text-taste-accent" />
+            <span>Portfolio Project</span>
           </span>
         </div>
 
-        <p className="text-xs text-slate-500">
-          Built with React + Vite + FastAPI
+        <p className="text-xs text-taste-muted font-mono">
+          React 18 + Vite + FastAPI
         </p>
       </div>
     </footer>
