@@ -152,12 +152,41 @@ Status: `Completed`
 Goal: Integrate `taste-skill` (`Leonxlnx/taste-skill`) anti-slop frontend guidelines and apply a studio-grade theme tailored for SubTranslate AI.
 
 Tasks:
-- [x] Downloaded and installed `taste-skill` into `.agents/skills/design-taste-frontend` and `.agents/skills/taste-skill`.
+- [x] Downloaded and installed `taste-skill` into `.agents/skills/design-taste-frontend`.
 - [x] Analyzed library palettes (`library/palettes.json`) and typography pairings (`library/type.json`).
 - [x] Selected the **`blue-black-cornflower`** ("Night and sky blue") theme: Deep night ground (`#0a0d14`), elevated slate surfaces (`#131824`), crisp silver-white text (`#e9edf3`), and a high-contrast Sky Blue accent (`#5ab9fc`).
 - [x] Paired with `Geist` and `Geist Mono` typography (`-0.025em` tracking for headlines, clean mono for timecodes).
-- [x] Replaced generic AI-slop gradients in `Navbar.jsx`, `Home.jsx`, and `TranslatePage.jsx` with purposeful high-contrast visual hierarchy and tactile micro-interactions (`active:scale-[0.98]`).
-- [x] Upgraded `VideoSubtitlePlayer` subtitle overlay with high-contrast translucent dark backdrop (`#0a0d14/90` with blur).
+- [x] Replaced generic AI-slop gradients with purposeful high-contrast visual hierarchy and tactile micro-interactions (`active:scale-[0.98]`).
+- [x] Redesigned Top Taskbar into floating segmented dock with glassmorphism and engine indicator.
+
+---
+
+## M6.6 - Whisper Memory Stability & Audio Chunking
+Status: `Completed`
+
+Goal: Eliminate `mkl_malloc: failed to allocate memory` and "không nhận diện được giọng nói" on long videos (9m - 1h).
+
+Tasks:
+- [x] Diagnosed root cause: Intel MKL Fast Memory Manager heap fragmentation combined with Windows page file limit.
+- [x] Configured `MKL_DISABLE_FAST_MM=1`, `CT2_PACKED_GEMM=0`, `OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`.
+- [x] Implemented automatic 180s (3-minute) audio chunking in `WhisperService` with sequential timestamp stitching.
+- [x] Capped RAM consumption at ~250MB regardless of video duration (24m - 1h+).
+- [x] Added explicit model memory cleanup (`del cls._instance; gc.collect()`) when switching between `tiny` and `base`.
+- [x] Created automated Windows Virtual Memory expansion script `scripts/tang_ram_ao_windows.bat`.
+
+---
+
+## M6.7 - Fullstack Cloud Deployment (Vercel & Render)
+Status: `Completed`
+
+Goal: Deploy complete portfolio platform to cloud with global HTTPS access.
+
+Tasks:
+- [x] Deployed React SPA Frontend to **Vercel** (`https://subtranslate-ai-muramasa.vercel.app`).
+- [x] Configured `vercel.json` for React Router SPA rewrites.
+- [x] Deployed FastAPI + Docker + FFmpeg + faster-whisper Backend to **Render.com** Singapore (`https://subtranslate-backend.onrender.com`).
+- [x] Configured Blueprint `render.yaml` with 512MB RAM optimization and MKL stability flags.
+- [x] Linked Frontend to Cloud Backend via `VITE_API_BASE_URL` environment variable.
 
 ---
 

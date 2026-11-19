@@ -80,6 +80,11 @@ Priority:
 - **Real-Time Audio**: Web Audio API (`AudioContext`, `MediaStream`, PCM 16kHz WAV encoding)
 - **Video UI**: HTML5 Video Player + Custom React Subtitle Overlay + Document Picture-in-Picture (PiP)
 
+## Cloud Deployment
+- **Frontend (Vercel)**: `https://subtranslate-ai-muramasa.vercel.app` (Global CDN, HTTPS, SPA rewrites)
+- **Backend (Render Singapore)**: `https://subtranslate-backend.onrender.com` (Docker container with FFmpeg + Python 3.11 + faster-whisper)
+- **API Communication**: Configured dynamically via `VITE_API_BASE_URL` in `frontend/.env.production`
+
 ---
 
 # Architecture Rules
