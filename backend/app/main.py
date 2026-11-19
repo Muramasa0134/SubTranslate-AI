@@ -1,9 +1,25 @@
 import os
 
-# Set thread limits and duplicate lib flags before any CTranslate2/MKL import
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-os.environ.setdefault("OMP_NUM_THREADS", "2")
-os.environ.setdefault("MKL_NUM_THREADS", "2")
+# Crucial memory stability flags for Intel MKL & CTranslate2 (faster-whisper)
+os.environ["MKL_DISABLE_FAST_MM"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["CT2_PACKED_GEMM"] = "0"
+os.environ["MKL_DYNAMIC"] = "FALSE"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# PyAV 14+ compatibility patch before any other imports
+import av
+_orig_av_open = av.open
+def _safe_av_open(*args, **kwargs):
+    kwargs.pop("metadata_errors", None)
+    return _orig_av_open(*args, **kwargs)
+av.open = _safe_av_open
+try:
+    import faster_whisper.audio
+    faster_whisper.audio.av.open = _safe_av_open
+except Exception:
+    pass
 
 import logging
 from contextlib import asynccontextmanager
