@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { 
   Play, 
   Pause, 
@@ -12,39 +12,6 @@ import {
   Sparkles, 
   Film 
 } from 'lucide-react';
-
-// Format millisecond timestamp to WebVTT timestamp (00:00:00.000)
-function formatVttTime(ms) {
-  const safeMs = Math.max(0, ms || 0);
-  const totalSeconds = Math.floor(safeMs / 1000);
-  const milliseconds = safeMs % 1000;
-  const seconds = totalSeconds % 60;
-  const minutes = Math.floor(totalSeconds / 60) % 60;
-  const hours = Math.floor(totalSeconds / 3600);
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
-}
-
-// Generate valid WebVTT string from subtitle items
-function generateVttContent(items, mode) {
-  if (!items || items.length === 0 || mode === 'none') return '';
-  const lines = ['WEBVTT\n'];
-  items.forEach((it, idx) => {
-    let text = '';
-    if (mode === 'original') {
-      text = it.original || it.text || '';
-    } else if (mode === 'both') {
-      text = `${it.original || ''}\n${it.translated || ''}`.trim();
-    } else {
-      text = it.translated || it.text || '';
-    }
-    if (!text.trim()) return;
-
-    lines.push(String(idx + 1));
-    lines.push(`${formatVttTime(it.start_ms)} --> ${formatVttTime(it.end_ms)}`);
-    lines.push(`${text.trim()}\n`);
-  });
-  return lines.join('\n');
-}
 
 export default function VideoSubtitlePlayer({ 
   videoUrl, 
@@ -64,7 +31,6 @@ export default function VideoSubtitlePlayer({
   const [subtitleMode, setSubtitleMode] = useState('translated'); // 'translated', 'original', 'both', 'none'
   const [activeSubtitle, setActiveSubtitle] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [vttBlobUrl, setVttBlobUrl] = useState(null);
 
   // Auto-switch to subtitled version whenever a new one is provided
   useEffect(() => {
@@ -72,34 +38,6 @@ export default function VideoSubtitlePlayer({
       setActiveSource('subtitled');
     }
   }, [subtitledVideoUrl]);
-
-  // Generate WebVTT blob track so browser native player & native fullscreen ALWAYS show subtitles
-  useEffect(() => {
-    if (!items || items.length === 0 || activeSource === 'subtitled' || subtitleMode === 'none') {
-      if (vttBlobUrl) {
-        URL.revokeObjectURL(vttBlobUrl);
-        setVttBlobUrl(null);
-      }
-      return;
-    }
-
-    const vttText = generateVttContent(items, subtitleMode);
-    if (!vttText) {
-      if (vttBlobUrl) {
-        URL.revokeObjectURL(vttBlobUrl);
-        setVttBlobUrl(null);
-      }
-      return;
-    }
-
-    const blob = new Blob([vttText], { type: 'text/vtt' });
-    const url = URL.createObjectURL(blob);
-    setVttBlobUrl(url);
-
-    return () => {
-      URL.revokeObjectURL(url);
-    };
-  }, [items, subtitleMode, activeSource]);
 
   // Monitor video playback time
   const handleTimeUpdate = () => {
@@ -123,47 +61,89 @@ export default function VideoSubtitlePlayer({
     setActiveSubtitle(current || null);
   }, [currentTimeMs, items]);
 
-  // Handle Fullscreen events and auto-reroute native video fullscreen to container
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-      
-      // If the user clicked the browser's native fullscreen button on the <video> tag,
-      // reroute fullscreen to containerRef so the custom overlay & controls stay visible!
-      if (fsEl === videoRef.current && containerRef.current) {
-        document.exitFullscreen().then(() => {
-          containerRef.current.requestFullscreen().catch(() => {});
-        }).catch(() => {});
-        return;
-      }
+  // Cross-browser Fullscreen Toggle on the entire Container (Video + Subtitle)
+  const toggleFullscreen = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-      setIsFullscreen(fsEl === containerRef.current);
+    const fsElement =
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement;
+
+    if (!fsElement) {
+      // Enter Fullscreen
+      const req =
+        container.requestFullscreen ||
+        container.webkitRequestFullscreen ||
+        container.mozRequestFullScreen ||
+        container.msRequestFullscreen;
+
+      if (req) {
+        req.call(container).catch((err) => {
+          console.warn('Native fullscreen blocked, using window fullscreen:', err);
+          setIsFullscreen(true);
+        });
+      } else {
+        setIsFullscreen(true);
+      }
+    } else {
+      // Exit Fullscreen
+      const exit =
+        document.exitFullscreen ||
+        document.webkitExitFullscreen ||
+        document.mozCancelFullScreen ||
+        document.msExitFullscreen;
+
+      if (exit) {
+        exit.call(document).catch(() => {});
+      }
+      setIsFullscreen(false);
+    }
+  }, []);
+
+  // Monitor fullscreen change events
+  useEffect(() => {
+    const handleFsChange = () => {
+      const fsElement =
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement;
+
+      setIsFullscreen(!!fsElement);
     };
 
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    document.addEventListener('mozfullscreenchange', handleFsChange);
+    document.addEventListener('MSFullscreenChange', handleFsChange);
 
     return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+      document.removeEventListener('mozfullscreenchange', handleFsChange);
+      document.removeEventListener('MSFullscreenChange', handleFsChange);
     };
   }, []);
 
-  // Toggle fullscreen mode on the container
-  const toggleFullscreen = () => {
-    if (!containerRef.current) return;
+  // Keyboard shortcut: Press 'F' for Fullscreen, 'Esc' to exit
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
 
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch(() => {
-        // Fallback to video tag if container fullscreen fails
-        videoRef.current?.requestFullscreen?.();
-      });
-    } else {
-      document.exitFullscreen().catch(() => {});
-    }
-  };
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        toggleFullscreen();
+      } else if (e.key === 'Escape' && isFullscreen) {
+        toggleFullscreen();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen, toggleFullscreen]);
 
   const currentPlayingUrl = (activeSource === 'subtitled' && subtitledVideoUrl) ? subtitledVideoUrl : videoUrl;
 
@@ -238,22 +218,36 @@ export default function VideoSubtitlePlayer({
             </>
           )}
 
-          {/* Dedicated Fullscreen Button */}
+          {/* Fullscreen Button on Top Bar */}
           <button
+            type="button"
             onClick={toggleFullscreen}
-            className="taste-button p-1.5 rounded-lg bg-taste-card hover:bg-taste-hover border border-taste-border text-taste-ink transition-colors"
-            title={isFullscreen ? 'Thu nhỏ (Esc)' : 'Phóng to toàn màn hình (F)'}
+            className="taste-button flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-taste-card hover:bg-taste-hover border border-taste-border text-taste-ink font-semibold text-xs transition-colors"
+            title={isFullscreen ? 'Thu nhỏ (Esc / F)' : 'Phóng to toàn màn hình (F)'}
           >
-            {isFullscreen ? <Minimize className="w-4 h-4 text-taste-accent" /> : <Maximize className="w-4 h-4" />}
+            {isFullscreen ? (
+              <>
+                <Minimize className="w-3.5 h-3.5 text-taste-accent" />
+                <span className="hidden sm:inline">Thu nhỏ</span>
+              </>
+            ) : (
+              <>
+                <Maximize className="w-3.5 h-3.5 text-taste-accent" />
+                <span className="hidden sm:inline">Phóng to</span>
+              </>
+            )}
           </button>
         </div>
       </div>
 
-      {/* Video Viewport Container (Enters Fullscreen seamlessly with subtitles) */}
+      {/* Video Viewport Container (Handles Fullscreen for BOTH Video + Single Subtitle) */}
       <div 
         ref={containerRef}
-        className={`relative w-full bg-black flex items-center justify-center group ${
-          isFullscreen ? 'h-screen w-screen' : 'aspect-video'
+        onDoubleClick={toggleFullscreen}
+        className={`relative w-full bg-black flex items-center justify-center overflow-hidden group select-none ${
+          isFullscreen 
+            ? 'fixed inset-0 z-[9999] w-screen h-screen' 
+            : 'aspect-video'
         }`}
       >
         <video
@@ -262,32 +256,37 @@ export default function VideoSubtitlePlayer({
           src={currentPlayingUrl}
           controls
           autoPlay={false}
-          crossOrigin="anonymous"
+          playsInline
           onTimeUpdate={handleTimeUpdate}
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
-          className="w-full h-full object-contain"
-        >
-          {/* Native WebVTT Track for browser native engine & fallback */}
-          {vttBlobUrl && activeSource === 'raw' && subtitleMode !== 'none' && (
-            <track
-              key={vttBlobUrl}
-              label="Tiếng Việt (SubTranslate AI)"
-              kind="subtitles"
-              srcLang="vi"
-              src={vttBlobUrl}
-              default
-            />
-          )}
-        </video>
+          className="w-full h-full object-contain cursor-pointer"
+        />
 
-        {/* Live Subtitle Overlay: Visible in both normal and fullscreen modes */}
+        {/* Floating Fullscreen Button on top-right of Video */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleFullscreen();
+          }}
+          className="absolute top-3 right-3 z-30 p-2 rounded-xl bg-black/70 hover:bg-black/90 text-white/90 hover:text-white backdrop-blur-md border border-white/10 shadow-lg opacity-0 group-hover:opacity-100 transition-all duration-200"
+          title={isFullscreen ? 'Thu nhỏ (Esc)' : 'Toàn màn hình (F)'}
+        >
+          {isFullscreen ? (
+            <Minimize className="w-4 h-4 text-taste-accent" />
+          ) : (
+            <Maximize className="w-4 h-4 text-white" />
+          )}
+        </button>
+
+        {/* SINGLE Live Subtitle Overlay: Displayed cleanly in both normal and fullscreen */}
         {activeSource === 'raw' && subtitleMode !== 'none' && activeSubtitle && (
           <div 
-            className={`absolute left-0 right-0 text-center pointer-events-none transition-all z-40 ${
+            className={`absolute left-0 right-0 text-center pointer-events-none transition-all z-20 ${
               isFullscreen 
                 ? 'bottom-20 sm:bottom-24 px-10' 
-                : 'bottom-14 px-6'
+                : 'bottom-12 sm:bottom-14 px-6'
             }`}
           >
             <div 
@@ -309,7 +308,7 @@ export default function VideoSubtitlePlayer({
               {(subtitleMode === 'translated' || subtitleMode === 'both') && (
                 <p 
                   className={`font-bold text-taste-accent tracking-tight leading-snug ${
-                    isFullscreen ? 'text-xl sm:text-2xl md:text-3xl' : 'text-base'
+                    isFullscreen ? 'text-xl sm:text-2xl md:text-3xl' : 'text-sm sm:text-base'
                   }`}
                 >
                   {activeSubtitle.translated}
@@ -329,19 +328,24 @@ export default function VideoSubtitlePlayer({
           </div>
         ) : (
           <div className="flex items-center space-x-2 text-taste-muted">
-            <span className="font-semibold text-taste-ink">Overlay:</span>
-            <div className="inline-flex rounded-lg bg-taste-bg p-1 border border-taste-border">
-              {['translated', 'original', 'both', 'none'].map((mode) => (
+            <span className="font-semibold text-taste-ink">Hiển thị:</span>
+            <div className="inline-flex rounded-lg bg-taste-bg p-0.5 border border-taste-border">
+              {[
+                { id: 'translated', label: 'Bản dịch' },
+                { id: 'original', label: 'Gốc' },
+                { id: 'both', label: 'Song ngữ' },
+                { id: 'none', label: 'Tắt' }
+              ].map((mode) => (
                 <button
-                  key={mode}
-                  onClick={() => setSubtitleMode(mode)}
-                  className={`taste-button px-2 py-0.5 rounded capitalize font-medium text-[11px] transition-colors ${
-                    subtitleMode === mode
+                  key={mode.id}
+                  onClick={() => setSubtitleMode(mode.id)}
+                  className={`taste-button px-2.5 py-0.5 rounded font-medium text-[11px] transition-colors ${
+                    subtitleMode === mode.id
                       ? 'bg-taste-card text-taste-accent border border-taste-borderLight shadow-sm'
                       : 'text-taste-muted hover:text-taste-ink'
                   }`}
                 >
-                  {mode}
+                  {mode.label}
                 </button>
               ))}
             </div>
