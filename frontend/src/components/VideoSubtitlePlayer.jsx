@@ -1,5 +1,50 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Play, Pause, Volume2, VolumeX, Maximize, RotateCcw, Video, Download, Sparkles, Film } from 'lucide-react';
+import { 
+  Play, 
+  Pause, 
+  Volume2, 
+  VolumeX, 
+  Maximize, 
+  Minimize, 
+  RotateCcw, 
+  Video, 
+  Download, 
+  Sparkles, 
+  Film 
+} from 'lucide-react';
+
+// Format millisecond timestamp to WebVTT timestamp (00:00:00.000)
+function formatVttTime(ms) {
+  const safeMs = Math.max(0, ms || 0);
+  const totalSeconds = Math.floor(safeMs / 1000);
+  const milliseconds = safeMs % 1000;
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
+}
+
+// Generate valid WebVTT string from subtitle items
+function generateVttContent(items, mode) {
+  if (!items || items.length === 0 || mode === 'none') return '';
+  const lines = ['WEBVTT\n'];
+  items.forEach((it, idx) => {
+    let text = '';
+    if (mode === 'original') {
+      text = it.original || it.text || '';
+    } else if (mode === 'both') {
+      text = `${it.original || ''}\n${it.translated || ''}`.trim();
+    } else {
+      text = it.translated || it.text || '';
+    }
+    if (!text.trim()) return;
+
+    lines.push(String(idx + 1));
+    lines.push(`${formatVttTime(it.start_ms)} --> ${formatVttTime(it.end_ms)}`);
+    lines.push(`${text.trim()}\n`);
+  });
+  return lines.join('\n');
+}
 
 export default function VideoSubtitlePlayer({ 
   videoUrl, 
@@ -11,11 +56,15 @@ export default function VideoSubtitlePlayer({
   fileName
 }) {
   const videoRef = useRef(null);
+  const containerRef = useRef(null);
+  
   const [activeSource, setActiveSource] = useState(subtitledVideoUrl ? 'subtitled' : 'raw');
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [subtitleMode, setSubtitleMode] = useState('translated'); // 'translated', 'original', 'both', 'none'
   const [activeSubtitle, setActiveSubtitle] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [vttBlobUrl, setVttBlobUrl] = useState(null);
 
   // Auto-switch to subtitled version whenever a new one is provided
   useEffect(() => {
@@ -23,6 +72,34 @@ export default function VideoSubtitlePlayer({
       setActiveSource('subtitled');
     }
   }, [subtitledVideoUrl]);
+
+  // Generate WebVTT blob track so browser native player & native fullscreen ALWAYS show subtitles
+  useEffect(() => {
+    if (!items || items.length === 0 || activeSource === 'subtitled' || subtitleMode === 'none') {
+      if (vttBlobUrl) {
+        URL.revokeObjectURL(vttBlobUrl);
+        setVttBlobUrl(null);
+      }
+      return;
+    }
+
+    const vttText = generateVttContent(items, subtitleMode);
+    if (!vttText) {
+      if (vttBlobUrl) {
+        URL.revokeObjectURL(vttBlobUrl);
+        setVttBlobUrl(null);
+      }
+      return;
+    }
+
+    const blob = new Blob([vttText], { type: 'text/vtt' });
+    const url = URL.createObjectURL(blob);
+    setVttBlobUrl(url);
+
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [items, subtitleMode, activeSource]);
 
   // Monitor video playback time
   const handleTimeUpdate = () => {
@@ -45,6 +122,48 @@ export default function VideoSubtitlePlayer({
     );
     setActiveSubtitle(current || null);
   }, [currentTimeMs, items]);
+
+  // Handle Fullscreen events and auto-reroute native video fullscreen to container
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+      
+      // If the user clicked the browser's native fullscreen button on the <video> tag,
+      // reroute fullscreen to containerRef so the custom overlay & controls stay visible!
+      if (fsEl === videoRef.current && containerRef.current) {
+        document.exitFullscreen().then(() => {
+          containerRef.current.requestFullscreen().catch(() => {});
+        }).catch(() => {});
+        return;
+      }
+
+      setIsFullscreen(fsEl === containerRef.current);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  // Toggle fullscreen mode on the container
+  const toggleFullscreen = () => {
+    if (!containerRef.current) return;
+
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen().catch(() => {
+        // Fallback to video tag if container fullscreen fails
+        videoRef.current?.requestFullscreen?.();
+      });
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
 
   const currentPlayingUrl = (activeSource === 'subtitled' && subtitledVideoUrl) ? subtitledVideoUrl : videoUrl;
 
@@ -118,34 +237,81 @@ export default function VideoSubtitlePlayer({
               )}
             </>
           )}
+
+          {/* Dedicated Fullscreen Button */}
+          <button
+            onClick={toggleFullscreen}
+            className="taste-button p-1.5 rounded-lg bg-taste-card hover:bg-taste-hover border border-taste-border text-taste-ink transition-colors"
+            title={isFullscreen ? 'Thu nhỏ (Esc)' : 'Phóng to toàn màn hình (F)'}
+          >
+            {isFullscreen ? <Minimize className="w-4 h-4 text-taste-accent" /> : <Maximize className="w-4 h-4" />}
+          </button>
         </div>
       </div>
 
-      {/* Video Viewport Container */}
-      <div className="relative aspect-video w-full bg-black flex items-center justify-center group">
+      {/* Video Viewport Container (Enters Fullscreen seamlessly with subtitles) */}
+      <div 
+        ref={containerRef}
+        className={`relative w-full bg-black flex items-center justify-center group ${
+          isFullscreen ? 'h-screen w-screen' : 'aspect-video'
+        }`}
+      >
         <video
           key={currentPlayingUrl}
           ref={videoRef}
           src={currentPlayingUrl}
           controls
           autoPlay={false}
+          crossOrigin="anonymous"
           onTimeUpdate={handleTimeUpdate}
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
           className="w-full h-full object-contain"
-        />
+        >
+          {/* Native WebVTT Track for browser native engine & fallback */}
+          {vttBlobUrl && activeSource === 'raw' && subtitleMode !== 'none' && (
+            <track
+              key={vttBlobUrl}
+              label="Tiếng Việt (SubTranslate AI)"
+              kind="subtitles"
+              srcLang="vi"
+              src={vttBlobUrl}
+              default
+            />
+          )}
+        </video>
 
-        {/* Live Subtitle Overlay ONLY when viewing raw video */}
+        {/* Live Subtitle Overlay: Visible in both normal and fullscreen modes */}
         {activeSource === 'raw' && subtitleMode !== 'none' && activeSubtitle && (
-          <div className="absolute bottom-14 left-0 right-0 px-6 text-center pointer-events-none transition-all">
-            <div className="inline-block max-w-[85%] bg-taste-bg/90 backdrop-blur-md px-5 py-2.5 rounded-xl border border-taste-border shadow-2xl">
+          <div 
+            className={`absolute left-0 right-0 text-center pointer-events-none transition-all z-40 ${
+              isFullscreen 
+                ? 'bottom-20 sm:bottom-24 px-10' 
+                : 'bottom-14 px-6'
+            }`}
+          >
+            <div 
+              className={`inline-block bg-taste-bg/95 backdrop-blur-md rounded-2xl border border-taste-border shadow-2xl transition-all ${
+                isFullscreen 
+                  ? 'max-w-[90%] px-8 py-3.5' 
+                  : 'max-w-[85%] px-5 py-2.5'
+              }`}
+            >
               {(subtitleMode === 'original' || subtitleMode === 'both') && (
-                <p className="text-xs font-medium text-taste-muted">
+                <p 
+                  className={`font-medium text-taste-muted leading-relaxed ${
+                    isFullscreen ? 'text-base sm:text-lg mb-1' : 'text-xs'
+                  }`}
+                >
                   {activeSubtitle.original}
                 </p>
               )}
               {(subtitleMode === 'translated' || subtitleMode === 'both') && (
-                <p className="text-base font-bold text-taste-accent mt-0.5 tracking-tight">
+                <p 
+                  className={`font-bold text-taste-accent tracking-tight leading-snug ${
+                    isFullscreen ? 'text-xl sm:text-2xl md:text-3xl' : 'text-base'
+                  }`}
+                >
                   {activeSubtitle.translated}
                 </p>
               )}

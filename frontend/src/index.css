@@ -65,3 +65,16 @@
   backdrop-filter: blur(14px);
   border: 1px solid rgba(90, 185, 252, 0.12);
 }
+
+/* Native HTML5 Subtitle track styling in Fullscreen */
+video::cue {
+  background-color: rgba(10, 13, 20, 0.88);
+  color: #5ab9fc;
+  font-family: 'Geist', 'Inter', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 1.15rem;
+  line-height: 1.4;
+  padding: 4px 10px;
+  border-radius: 8px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+}
